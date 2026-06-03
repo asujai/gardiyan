@@ -1,9 +1,13 @@
 package com.example.viewmodel
 
 import android.app.AlarmManager
+import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Process
 import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -62,10 +66,6 @@ class GuardianViewModel(context: Context) : ViewModel() {
     // Service running state observed locally
     private val _isMonitoringActive = MutableStateFlow(BlockOverlayService.isServiceRunning)
     val isMonitoringActive: StateFlow<Boolean> = _isMonitoringActive.asStateFlow()
-
-    // Simulation running state
-    private val _isSimulationRunning = MutableStateFlow(BlockOverlayService.isSimulationRunning)
-    val isSimulationRunning: StateFlow<Boolean> = _isSimulationRunning.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -150,41 +150,6 @@ class GuardianViewModel(context: Context) : ViewModel() {
     }
 
     /**
-     * Toggles whether we simulate opening a blocked app to trigger overlays instantly
-     */
-    fun toggleBlockSimulation(value: Boolean) {
-        BlockOverlayService.isSimulationRunning = value
-        _isSimulationRunning.value = value
-    }
-
-    /**
-     * Simulates time reduction. Allows reviewers to easily trigger limit expiration!
-     */
-    fun simulateRemainingTimeReduction() {
-        viewModelScope.launch {
-            val session = repository.getSessionSync() ?: return@launch
-            val nextTime = (session.remainingMinutesToday - 15).coerceAtLeast(0)
-            
-            val updated = session.copy(remainingMinutesToday = nextTime)
-            repository.saveSession(updated)
-
-            if (nextTime <= 0) {
-                repository.insertLog(
-                    eventType = "LIMIT_EXCEEDED",
-                    appName = session.targetAppName,
-                    details = "Günlük koruma süreniz kalmadı! Instagram, TikTok benzeri kilitli uygulamalara girişler engellenecektir."
-                )
-            } else {
-                repository.insertLog(
-                    eventType = "TIME_DECREMENT",
-                    appName = session.targetAppName,
-                    details = "Zaman simülasyonu: Kalan süre 15 dk düşürüldü. Kalan: $nextTime Dk."
-                )
-            }
-        }
-    }
-
-    /**
      * Clear and reset target locks cleanly safely
      */
     fun resetTargetSession() {
@@ -206,24 +171,6 @@ class GuardianViewModel(context: Context) : ViewModel() {
     }
 
     /**
-     * Simulates daily success for the active goal - rewards Level levels or clears Red Badge
-     */
-    fun triggerSimulatedSuccess() {
-        viewModelScope.launch {
-            repository.succeedActiveTarget()
-        }
-    }
-
-    /**
-     * Force fails active target with penalty rules instantly
-     */
-    fun triggerSimulatedFailure() {
-        viewModelScope.launch {
-            repository.failActiveTarget()
-        }
-    }
-
-    /**
      * Clears local history logs
      */
     fun clearLogs() {
@@ -233,13 +180,25 @@ class GuardianViewModel(context: Context) : ViewModel() {
     }
 
     /**
-     * Helper checks if Usage Access settings exist and is enabled
+     * Helper checks if Usage Access settings exist and is enabled via AppOpsManager
      */
     fun hasUsageStatsPermission(context: Context): Boolean {
-        val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-        val time = System.currentTimeMillis()
-        val stats = usageStatsManager?.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, time - 1000 * 10, time)
-        return !stats.isNullOrEmpty()
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager ?: return false
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                Process.myUid(),
+                context.packageName
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                Process.myUid(),
+                context.packageName
+            )
+        }
+        return mode == AppOpsManager.MODE_ALLOWED
     }
 
     fun openUsageStatsSettings(context: Context) {
@@ -255,8 +214,70 @@ class GuardianViewModel(context: Context) : ViewModel() {
 
     fun openOverlaySettings(context: Context) {
         val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+            data = android.net.Uri.parse("package:${context.packageName}")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        context.startActivity(intent)
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            val fallbackIntent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(fallbackIntent)
+        }
+    }
+
+    /**
+     * Dynamically retrieves list of user-installed apps and populates procrastination targets
+     */
+    fun getInstalledApps(context: Context): List<Pair<String, String>> {
+        val pm = context.packageManager
+        val list = mutableListOf<Pair<String, String>>()
+        
+        val popularPackages = setOf(
+            "com.instagram.android",
+            "com.zhiliaoapp.musically",
+            "com.google.android.youtube",
+            "com.twitter.android",
+            "com.facebook.katana",
+            "com.reddit.frontpage",
+            "com.netflix.mediaclient",
+            "com.valvesoftware.android.steam.community"
+        )
+        
+        val launcherIntent = Intent(Intent.ACTION_MAIN, null).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        val launcherPackageNames = try {
+            pm.queryIntentActivities(launcherIntent, 0).map {
+                it.activityInfo.packageName
+            }.toSet()
+        } catch (e: Exception) {
+            emptySet()
+        }
+        
+        try {
+            val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+            for (appInfo in apps) {
+                val pkgName = appInfo.packageName
+                if (pkgName == context.packageName) continue
+                
+                val isSystemApp = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+                val isLauncher = launcherPackageNames.isEmpty() || launcherPackageNames.contains(pkgName)
+                val isPopular = popularPackages.contains(pkgName)
+                
+                if (isPopular || (!isSystemApp && isLauncher)) {
+                    val label = appInfo.loadLabel(pm).toString()
+                    list.add(Pair(label, pkgName))
+                }
+            }
+        } catch (e: Exception) {
+            // Fallback inside outer block
+        }
+        
+        val popularList = list.filter { popularPackages.contains(it.second) }.sortedBy { it.first.uppercase() }
+        val otherList = list.filter { !popularPackages.contains(it.second) }.sortedBy { it.first.uppercase() }
+        
+        return popularList + otherList
     }
 }

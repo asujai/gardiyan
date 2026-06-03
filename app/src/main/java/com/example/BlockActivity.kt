@@ -80,7 +80,6 @@ class BlockActivity : ComponentActivity() {
                         onUnlockFailPenalty = {
                             serviceScope.launch {
                                 repository.failActiveTarget()
-                                BlockOverlayService.isSimulationRunning = false
                                 runOnUiThread {
                                     Toast.makeText(
                                         this@BlockActivity,
@@ -114,11 +113,9 @@ fun BlockScreenContent(
     // Hold to bypass state variables
     var holdDurationMs by remember { mutableStateOf(0L) }
     var isPressing by remember { mutableStateOf(false) }
-    // Add speed test toggle (10x fast speed) so developer/user can test easily without holding full 60 seconds
-    var debugFastSpeed by remember { mutableStateOf(false) }
 
     val maxHoldTimeMs = 60000L
-    val targetTimeMs = if (debugFastSpeed) 5000L else maxHoldTimeMs
+    val targetTimeMs = maxHoldTimeMs
     val progress = (holdDurationMs.toFloat() / targetTimeMs).coerceIn(0f, 1f)
 
     val coroutineScope = rememberCoroutineScope()
@@ -312,7 +309,7 @@ fun BlockScreenContent(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Parmağını aşağıdaki butona basılı tut. Kesintisiz ${if (debugFastSpeed) "5" else "60" } saniye boyunca butonun üzerinde kalmalısın. Parmağını anlık çekersen süre tamamen sıfırlanır.",
+                        text = "Parmağını aşağıdaki butona basılı tut. Kesintisiz 60 saniye boyunca butonun üzerinde kalmalısın. Parmağını anlık çekersen süre tamamen sıfırlanır.",
                         color = MutedGray,
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
@@ -403,28 +400,8 @@ fun BlockScreenContent(
                     }
                 }
 
-                // Debug speed / Back Column
+                // Back action Column
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    ) {
-                        Checkbox(
-                            checked = debugFastSpeed,
-                            onCheckedChange = { debugFastSpeed = it },
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = DangerRed,
-                                checkmarkColor = PureBlack
-                            )
-                        )
-                        Text(
-                            text = "Test Hızlandırıcı (60 sn yerine 5 sn)",
-                            color = MutedGray,
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-
                     Button(
                         onClick = { isHoldUiVisible = false },
                         shape = RoundedCornerShape(999.dp),
