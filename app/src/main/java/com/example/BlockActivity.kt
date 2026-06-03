@@ -137,6 +137,8 @@ fun BlockScreenContent(
     onGoHome: () -> Unit,
     onUnlockFailPenalty: () -> Unit
 ) {
+    androidx.activity.compose.BackHandler(onBack = onGoHome)
+
     Box(
         modifier = Modifier
             .fillMaxSize()

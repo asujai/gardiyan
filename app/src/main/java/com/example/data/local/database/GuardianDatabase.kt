@@ -15,7 +15,7 @@ import com.example.data.local.entity.UserSessionEntity
         FriendEntity::class,
         StatusLogEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class GuardianDatabase : RoomDatabase() {
