@@ -1,6 +1,7 @@
 package com.example
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import android.widget.Toast
@@ -43,14 +44,22 @@ class BlockActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Servis tarafından birden fazla açılma engeli
         BlockOverlayService.isBlockActivityShown = true
 
-        // Anti-Screen Capture (FLAG_SECURE) applied for MVP Observer Mode privacy guarantee
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE
-        )
+        // Ekran kilitli olsa bile veya başka uygulama açıkken göster
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
+
+        // Diğer uygulamaların üzerinde çıkması için
+        window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
 
         val db = GuardianDatabase.getDatabase(applicationContext)
         repository = GuardianRepository(db.guardianDao())

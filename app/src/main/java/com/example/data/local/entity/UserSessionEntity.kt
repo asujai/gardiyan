@@ -16,6 +16,7 @@ data class UserSessionEntity(
     val targetAppName: String = "", // e.g. "Instagram"
     val dailyLimitMinutes: Int = 60,
     val remainingMinutesToday: Int = 60,
+    val remainingSecondsToday: Int = 3600, // Gerçek zamanlı saniye sayacı (dakika * 60)
     val isObserverMode: Boolean = false, // Guard (False) vs Observer (True)
     val shameMessage: String = "",
     val shameImagePath: String = "",

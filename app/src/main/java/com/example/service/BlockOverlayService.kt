@@ -4,7 +4,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
@@ -27,8 +26,9 @@ class BlockOverlayService : Service() {
 
     companion object {
         var isServiceRunning = false
-        // BlockActivity'nin sürekli tekrar açılmasını engelleyen flag
         var isBlockActivityShown = false
+        const val CHANNEL_ID = "gardiyan_service_channel"
+        const val NOTIF_ID = 101
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -38,68 +38,67 @@ class BlockOverlayService : Service() {
         isServiceRunning = true
         createNotificationChannel()
         startForegroundCompat()
-        startAppInterception()
+        startTracking()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         return START_STICKY
     }
 
-    /**
-     * Android 14+ (API 34+) uyumlu startForeground.
-     * foregroundServiceType belirtilmezse Android 14+'da servis hemen öldürülüyor.
-     */
     private fun startForegroundCompat() {
-        val channelId = "gardiyan_service_channel"
         val notificationIntent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this, 0, notificationIntent,
             PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(this, channelId)
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Gardiyan Aktif")
-            .setContentText("Kilitli uygulamalara erişiminiz izleniyor.")
+            .setContentText("Uygulama kullanımı izleniyor.")
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
 
+        // API 29+ için ServiceCompat kullan
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // API 29+ → ServiceCompat ile type-safe startForeground
             ServiceCompat.startForeground(
                 this,
-                101,
+                NOTIF_ID,
                 notification,
+                // API 34+ için SPECIAL_USE — en az kısıtlı tip
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
                 } else {
                     0
                 }
             )
         } else {
-            startForeground(101, notification)
+            startForeground(NOTIF_ID, notification)
         }
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val serviceChannel = NotificationChannel(
-                "gardiyan_service_channel",
+            val channel = NotificationChannel(
+                CHANNEL_ID,
                 "Gardiyan İzleme Servisi",
                 NotificationManager.IMPORTANCE_LOW
-            )
-            serviceChannel.description = "Gardiyan arka plan izleme bildirimi"
-            val manager = getSystemService(NotificationManager::class.java)
-            manager?.createNotificationChannel(serviceChannel)
+            ).apply {
+                description = "Gardiyan arka plan izleme bildirimi"
+            }
+            getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
         }
     }
 
-    private var activeSecondsCount = 0
-    private var lastTrackedPkg = ""
-    private var lastCheckedDayOfYear = -1
-
-    private fun startAppInterception() {
+    // ─────────────────────────────────────────────────────────────────
+    // ANA TAKİP DÖNGÜSÜ
+    // queryUsageStats() kullanarak gün başından bu yana hedef uygulamanın
+    // toplam kullanım süresini ms cinsinden alıp saniyeye çeviriyoruz.
+    // Bu yöntem queryEvents()'e göre çok daha güvenilir ve tüm Android
+    // sürümlerinde (özellikle 11+) tutarlı çalışır.
+    // ─────────────────────────────────────────────────────────────────
+    private fun startTracking() {
         trackingJob = serviceScope.launch {
             val db = GuardianDatabase.getDatabase(applicationContext)
             val repository = GuardianRepository(db.guardianDao())
@@ -107,145 +106,136 @@ class BlockOverlayService : Service() {
             while (isActive) {
                 try {
                     val session = repository.getSessionSync()
-                    if (session != null && session.isActive) {
+
+                    if (session != null && session.isActive && session.targetAppPackage.isNotEmpty()) {
                         val targetPkg = session.targetAppPackage
 
-                        if (targetPkg.isNotEmpty()) {
-                            // ─── GÜN SIFIRLAMASI: Gece yarısı geçildiyse kalan süreyi sıfırla ───
-                            val todayDayOfYear = getCurrentDayOfYear()
-                            if (lastCheckedDayOfYear != -1 && lastCheckedDayOfYear != todayDayOfYear) {
-                                // Yeni güne geçildi: Kalan süreyi günlük limite sıfırla
-                                repository.saveSession(
-                                    session.copy(
-                                        remainingMinutesToday = session.dailyLimitMinutes,
-                                        lastCheckedMillis = System.currentTimeMillis()
-                                    )
+                        // ─── GÜNÜN BAŞLANGICI (00:00:00) ───
+                        val dayStart = getDayStartMillis()
+                        val now = System.currentTimeMillis()
+
+                        // ─── queryUsageStats ile BUGÜNKÜ toplam kullanım süresi ───
+                        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+                        val usedMs: Long = if (usm != null) {
+                            try {
+                                val stats = usm.queryUsageStats(
+                                    UsageStatsManager.INTERVAL_DAILY,
+                                    dayStart,
+                                    now
                                 )
-                                repository.insertLog(
-                                    eventType = "DAILY_RESET",
-                                    appName = session.targetAppName,
-                                    details = "Yeni gün başladı. Kalan süre ${session.dailyLimitMinutes} dakikaya sıfırlandı."
+                                stats?.find { it.packageName == targetPkg }
+                                    ?.totalTimeInForeground ?: 0L
+                            } catch (e: Exception) {
+                                0L
+                            }
+                        } else {
+                            0L
+                        }
+
+                        // Gün başından bu yana kaç saniye kullanıldı
+                        val usedSeconds = (usedMs / 1000L).toInt()
+
+                        // Günlük limit kaç saniye
+                        val limitSeconds = session.dailyLimitMinutes * 60
+
+                        // Kalan saniye
+                        val remainingSeconds = (limitSeconds - usedSeconds).coerceAtLeast(0)
+
+                        // Kalan dakika (UI'da gösterim için)
+                        val remainingMinutes = remainingSeconds / 60
+
+                        // ─── DB GÜNCELLE (yalnızca değer değiştiyse) ───
+                        if (session.remainingSecondsToday != remainingSeconds ||
+                            session.remainingMinutesToday != remainingMinutes) {
+                            repository.saveSession(
+                                session.copy(
+                                    remainingSecondsToday = remainingSeconds,
+                                    remainingMinutesToday = remainingMinutes,
+                                    lastCheckedMillis = now
                                 )
-                                activeSecondsCount = 0
-                                lastCheckedDayOfYear = todayDayOfYear
-                                delay(1000)
-                                continue
-                            }
-                            lastCheckedDayOfYear = todayDayOfYear
+                            )
+                        }
 
-                            // Hedef paket değiştiyse sayacı sıfırla
-                            if (lastTrackedPkg != targetPkg) {
-                                lastTrackedPkg = targetPkg
-                                activeSecondsCount = 0
-                            }
+                        // ─── BLOK KONTROL: Süre bitti mi ve hedef uygulama ön planda mı? ───
+                        val isExpired = remainingSeconds <= 0
+                        val isForeground = isTargetAppInForeground(targetPkg)
 
-                            val remainingMinutes = session.remainingMinutesToday
-                            val isExpired = remainingMinutes <= 0
+                        if (isExpired && isForeground && !isBlockActivityShown) {
+                            isBlockActivityShown = true
 
-                            // ─── FOREGROUND UYGULAMA TESPİTİ ───
-                            val foregroundPkg = getUpdatedForegroundPackageName() ?: ""
+                            repository.insertLog(
+                                eventType = "BLOCKED",
+                                appName = session.targetAppName,
+                                details = "Günlük limit aşıldı ($usedSeconds sn kullanıldı / $limitSeconds sn limit). Erişim engellendi."
+                            )
 
-                            // Hedef uygulamanın kullanımda olup olmadığını kontrol et
-                            val isUsingTargetApp = foregroundPkg.isNotEmpty() &&
-                                    foregroundPkg.contains(targetPkg, ignoreCase = true)
-
-                            // ─── SÜRE SAYACI: Kullanımdaysa ve süresi dolmamışsa say ───
-                            if (isUsingTargetApp && !isExpired && foregroundPkg != packageName) {
-                                activeSecondsCount++
-                                if (activeSecondsCount >= 60) {
-                                    activeSecondsCount = 0
-                                    val newRemaining = (remainingMinutes - 1).coerceAtLeast(0)
-                                    repository.saveSession(session.copy(remainingMinutesToday = newRemaining))
-
-                                    repository.insertLog(
-                                        eventType = "TIME_DECREMENT",
-                                        appName = session.targetAppName,
-                                        details = "Uygulama kullanımda. Kalan süre 1 dakika düştü. Kalan: $newRemaining dakika."
-                                    )
-                                }
-                            }
-
-                            // ─── KİLİT MEKANİZMASI: Süre dolduysa ve uygulamadaysa engelle ───
-                            val shouldBlock = isExpired && isUsingTargetApp && foregroundPkg != packageName
-
-                            if (shouldBlock && !isBlockActivityShown) {
-                                // Flag'i true yap: Aynı anda birden fazla BlockActivity açılmasın
-                                isBlockActivityShown = true
-
-                                repository.insertLog(
-                                    eventType = "BLOCKED",
-                                    appName = session.targetAppName,
-                                    details = "Günlük limit aşıldı. Erişim engellendi."
+                            val blockIntent = Intent(applicationContext, BlockActivity::class.java).apply {
+                                addFlags(
+                                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                    Intent.FLAG_ACTIVITY_SINGLE_TOP
                                 )
-
-                                val blockIntent = Intent(applicationContext, BlockActivity::class.java).apply {
-                                    addFlags(
-                                        Intent.FLAG_ACTIVITY_NEW_TASK or
-                                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                                        Intent.FLAG_ACTIVITY_SINGLE_TOP
-                                    )
-                                    putExtra("app_name", session.targetAppName)
-                                    putExtra("app_pkg", targetPkg)
-                                }
-                                startActivity(blockIntent)
+                                putExtra("app_name", session.targetAppName)
+                                putExtra("app_pkg", targetPkg)
                             }
+                            startActivity(blockIntent)
+                        }
 
-                            // ─── UNBLOCK: Hedef uygulamadan çıkıldıysa flag sıfırla ───
-                            if (!isUsingTargetApp) {
-                                isBlockActivityShown = false
-                            }
+                        // Hedef uygulamadan çıkıldıysa flag'i sıfırla
+                        if (!isForeground) {
+                            isBlockActivityShown = false
                         }
                     }
+
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
-                delay(1000) // Her 1 saniyede bir kontrol
+
+                delay(1000L) // Her saniye kontrol
             }
         }
     }
 
     /**
-     * Mevcut günün yıl içindeki sıra numarasını döndürür (gün sıfırlama için).
+     * Hedef uygulamanın şu an ön planda (foreground) olup olmadığını kontrol eder.
+     * queryUsageStats(INTERVAL_BEST) ile son 10 saniyelik pencerede event kontrolü.
+     * Bu yöntem, queryEvents()'e ek olarak çapraz doğrulama sağlar.
      */
-    private fun getCurrentDayOfYear(): Int {
-        val cal = Calendar.getInstance()
-        return cal.get(Calendar.DAY_OF_YEAR)
-    }
-
-    private var currentForegroundApp: String? = null
-    private var lastEventTime: Long = 0L
-
-    /**
-     * STATEFUL TRACKING: Uygulamanın ne kadar süre açık kaldığını doğru hesaplamak için,
-     * her 1 saniyede sadece yeni event'leri okuyarak 'currentForegroundApp' durumunu güncelleriz.
-     * Servis ilk çalıştığında son 24 saati tarayıp şu an açık olan uygulamayı bulur.
-     */
-    private fun getUpdatedForegroundPackageName(): String? {
-        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return currentForegroundApp
+    private fun isTargetAppInForeground(targetPkg: String): Boolean {
+        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return false
         val now = System.currentTimeMillis()
 
-        // İlk çalıştırmada son 24 saati tara, aksi halde sadece son okumadan sonrakileri tara
-        val startTime = if (lastEventTime == 0L) now - (24 * 60 * 60 * 1000L) else lastEventTime
+        return try {
+            // Son 10 saniyede INTERVAL_BEST ile kontrol
+            val stats = usm.queryUsageStats(
+                UsageStatsManager.INTERVAL_BEST,
+                now - 10_000L,
+                now
+            )
+            if (stats.isNullOrEmpty()) return false
 
-        val events = try { usm.queryEvents(startTime, now) } catch (e: Exception) { null }
-        if (events != null) {
-            val event = UsageEvents.Event()
-            while (events.hasNextEvent()) {
-                events.getNextEvent(event)
-                if (event.timeStamp > lastEventTime) {
-                    if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
-                        currentForegroundApp = event.packageName
-                    } else if (event.eventType == UsageEvents.Event.ACTIVITY_PAUSED ||
-                               event.eventType == UsageEvents.Event.ACTIVITY_STOPPED) {
-                        if (currentForegroundApp == event.packageName) {
-                            currentForegroundApp = null
-                        }
-                    }
-                    lastEventTime = event.timeStamp
-                }
-            }
+            // En son kullanılan uygulama hedef paket mi?
+            val recent = stats
+                .filter { it.lastTimeUsed > now - 10_000L }
+                .maxByOrNull { it.lastTimeUsed }
+
+            recent?.packageName == targetPkg
+        } catch (e: Exception) {
+            false
         }
-        return currentForegroundApp
+    }
+
+    /**
+     * Bugünün başlangıcını (00:00:00) ms cinsinden döndürür.
+     */
+    private fun getDayStartMillis(): Long {
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        return cal.timeInMillis
     }
 
     override fun onDestroy() {

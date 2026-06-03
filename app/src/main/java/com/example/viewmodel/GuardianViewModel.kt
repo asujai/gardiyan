@@ -114,11 +114,12 @@ class GuardianViewModel(context: Context) : ViewModel() {
                 targetAppPackage = _targetAppPackage.value,
                 dailyLimitMinutes = _dailyLimitMinutes.value,
                 remainingMinutesToday = _dailyLimitMinutes.value,
+                remainingSecondsToday = _dailyLimitMinutes.value * 60,
                 isObserverMode = _isObserverMode.value,
                 shameMessage = _shameMessage.value,
                 observerContactName = _observerContactName.value,
                 observerInviteLink = inviteLink,
-                isObserverConfirmed = !_isObserverMode.value // Automatically confirmed if Guard Mode A
+                isObserverConfirmed = !_isObserverMode.value
             )
 
             repository.saveSession(updatedSession)

@@ -542,7 +542,7 @@ fun DashboardScreen(
                                 )
 
                                 val progressVal = if (activeSession.dailyLimitMinutes > 0) {
-                                    (activeSession.remainingMinutesToday.toFloat() / activeSession.dailyLimitMinutes.toFloat()).coerceIn(0f, 1f)
+                                    (activeSession.remainingSecondsToday.toFloat() / (activeSession.dailyLimitMinutes * 60).toFloat()).coerceIn(0f, 1f)
                                 } else {
                                     0f
                                 }
@@ -557,16 +557,20 @@ fun DashboardScreen(
                                     trackColor = Color.Transparent
                                 )
 
+                                val totalSecs = activeSession.remainingSecondsToday.coerceAtLeast(0)
+                                val mm = totalSecs / 60
+                                val ss = totalSecs % 60
+
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text(
-                                        text = String.format("%02d:00", activeSession.remainingMinutesToday),
+                                        text = String.format("%02d:%02d", mm, ss),
                                         fontSize = 44.sp,
                                         fontWeight = FontWeight.ExtraLight,
-                                        color = if (activeSession.remainingMinutesToday <= 0) DangerRed else PureBlack
+                                        color = if (totalSecs <= 0) DangerRed else PureBlack
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
-                                        text = "DAKİKA",
+                                        text = "DAKİKA : SANİYE",
                                         fontSize = 9.sp,
                                         fontFamily = FontFamily.Monospace,
                                         color = MutedGray,
@@ -1007,6 +1011,6 @@ fun HeaderSection(session: UserSessionEntity?) {
         // Minimalist görünüm için rütbe ve utanç rozeti alanları temizlendi.
     }
 }
-}
 
 // HistoryLogs ve JSON Schema görüntüleyicisi UI bileşenleri silindi
+
