@@ -1000,7 +1000,7 @@ fun HeaderSection(session: UserSessionEntity?) {
                     .padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
                 Text(
-                    text = "v0.3",
+                    text = "v0.6",
                     fontSize = 9.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,

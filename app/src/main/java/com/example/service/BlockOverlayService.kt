@@ -8,12 +8,21 @@ import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.example.MainActivity
-import com.example.BlockActivity
 import com.example.data.local.database.GuardianDatabase
 import com.example.data.repository.GuardianRepository
 import kotlinx.coroutines.*
@@ -24,12 +33,14 @@ class BlockOverlayService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
     private var trackingJob: Job? = null
 
-    // Son bilinen ön plan uygulamasını hafızada tutarız.
     private var lastForegroundPackage: String = ""
+    private var windowManager: WindowManager? = null
+    private var overlayView: View? = null
+    private var isOverlayShowing = false
+    private var isCurrentlyBlocked = false
 
     companion object {
         var isServiceRunning = false
-        var isBlockActivityShown = false
         const val CHANNEL_ID = "gardiyan_service_channel"
         const val NOTIF_ID = 101
     }
@@ -57,7 +68,7 @@ class BlockOverlayService : Service() {
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Gardiyan Aktif")
-            .setContentText("Kilitli uygulamalarınız arka planda denetleniyor.")
+            .setContentText("Kilitli uygulamalarınız anlık olarak denetleniyor.")
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -91,14 +102,15 @@ class BlockOverlayService : Service() {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // GERÇEK ZAMANLI FOREGROUND TAKİBİ
-    // Uygulamanın süresi SADECE kullanıcı hedef uygulamanın (Instagram) 
-    // içindeyken saniye saniye azalır. Başka bir uygulamadaysa azalmaz.
+    // APP LOCKER MIMARISI (OVERLAY)
+    // 250ms döngü ile hedefe girildiği "an" silinemez kırmızı perde indirilir.
     // ─────────────────────────────────────────────────────────────────
     private fun startTracking() {
         trackingJob = serviceScope.launch {
             val db = GuardianDatabase.getDatabase(applicationContext)
             val repository = GuardianRepository(db.guardianDao())
+
+            var lastSecondTick = System.currentTimeMillis()
 
             while (isActive) {
                 try {
@@ -106,88 +118,173 @@ class BlockOverlayService : Service() {
 
                     if (session != null && session.isActive && session.targetAppPackage.isNotEmpty()) {
                         val targetPkg = session.targetAppPackage
-
-                        // 1. Ekrandaki güncel aktif uygulamayı bul
                         val currentApp = getForegroundPackage()
                         
-                        // Eğer aktif uygulamayı okuyabildiysek, hafızaya alalım
-                        if (currentApp != null && currentApp.isNotEmpty()) {
+                        if (!currentApp.isNullOrEmpty()) {
                             lastForegroundPackage = currentApp
                         }
 
-                        // 2. Eğer kullanıcı ŞU ANDA hedef uygulamanın (Örn: Instagram) içindeyse
+                        // Sadece hedef uygulama açıkken süre sayar ve bloklar
                         if (lastForegroundPackage == targetPkg) {
-                            
+                            val now = System.currentTimeMillis()
                             var remainingSeconds = session.remainingSecondsToday
-                            
-                            // Süreden 1 saniye düşüyoruz çünkü Instagram açık
-                            if (remainingSeconds > 0) {
-                                remainingSeconds -= 1
-                                val remainingMinutes = remainingSeconds / 60
 
-                                // DB'ye güncel süreyi anında yazıyoruz ki Dashboard güncellensin
-                                repository.saveSession(
-                                    session.copy(
-                                        remainingSecondsToday = remainingSeconds,
-                                        remainingMinutesToday = remainingMinutes,
-                                        lastCheckedMillis = System.currentTimeMillis()
+                            // Saniyede 1 kez süreyi düşür (çünkü döngü 250ms)
+                            if (now - lastSecondTick >= 1000L) {
+                                lastSecondTick = now
+                                if (remainingSeconds > 0) {
+                                    remainingSeconds -= 1
+                                    val remainingMinutes = remainingSeconds / 60
+
+                                    repository.saveSession(
+                                        session.copy(
+                                            remainingSecondsToday = remainingSeconds,
+                                            remainingMinutesToday = remainingMinutes,
+                                            lastCheckedMillis = now
+                                        )
                                     )
-                                )
+                                }
                             }
 
-                            // 3. Süre bittiyse ve KULLANICI HALA INSTAGRAM İÇİNDEYSE (Veya girmeye çalıştıysa)
+                            // Süre bitmişse OVERLAY BASTIR
                             if (remainingSeconds <= 0) {
-                                if (!isBlockActivityShown) {
-                                    isBlockActivityShown = true
-                                    
+                                showOverlay(session.targetAppName)
+                                
+                                if (!isCurrentlyBlocked) {
+                                    isCurrentlyBlocked = true
                                     repository.insertLog(
                                         eventType = "BLOCKED",
                                         appName = session.targetAppName,
-                                        details = "Hedef uygulamaya erişim engellendi (Süre doldu)."
+                                        details = "Uygulama tam ekran maskelendi (Süre doldu)."
                                     )
-
-                                    val blockIntent = Intent(applicationContext, BlockActivity::class.java).apply {
-                                        addFlags(
-                                            Intent.FLAG_ACTIVITY_NEW_TASK or
-                                            Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                                            Intent.FLAG_ACTIVITY_SINGLE_TOP
-                                        )
-                                        putExtra("app_name", session.targetAppName)
-                                        putExtra("app_pkg", targetPkg)
-                                    }
-                                    startActivity(blockIntent)
                                 }
                             }
                         } else {
-                            // Kullanıcı Instagram'da değil (Ana Ekranda, WhatsApp'ta vb.)
-                            // Süre düşmez, hiçbir şey yapılmaz.
+                            // Hedef uygulamadan çıkıldığı an maskeyi kaldır (Anında tepki)
+                            removeOverlay()
+                            isCurrentlyBlocked = false
                             
-                            // Eğer kullanıcının bulunduğu paket Gardiyan (com.example) değilse
-                            // Veya kilit ekranından çıktıysa bayrağı sıfırla ki tekrar girebilirse tetiklensin.
-                            if (lastForegroundPackage != packageName) {
-                                isBlockActivityShown = false
-                            }
+                            // Tick süresini senkronize et ki uygulamaya girince direkt 1 sn gitmesin
+                            lastSecondTick = System.currentTimeMillis()
                         }
+                    } else {
+                        removeOverlay()
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
 
-                // Döngü her 1 saniyede bir döner (Saniye bazlı kesin takip)
-                delay(1000L)
+                // Çok hızlı (250ms) algılama, sıfır gecikme!
+                delay(250L)
             }
         }
     }
 
-    /**
-     * UsageEvents kullanarak son 1 dakika içerisindeki "ACTIVITY_RESUMED"
-     * eventlerini tarar ve ekrandaki en son aktif uygulamayı bulur.
-     */
+    private fun showOverlay(appName: String) {
+        if (isOverlayShowing) return
+        isOverlayShowing = true // Çift çağrıyı hemen engelle
+
+        Handler(Looper.getMainLooper()).post {
+            if (overlayView != null) return@post
+
+            windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+            
+            // LayoutParams.FLAG_LAYOUT_IN_SCREEN | FLAG_NOT_TOUCH_MODAL (Kullanıcı arkaya tıklayamasın diye modal değil, odak alabilen tam ekran)
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                else
+                    @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT
+            )
+            
+            val layout = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.parseColor("#B71C1C")) // Koyu Kırmızı / Danger
+                gravity = Gravity.CENTER
+                
+                val tvHeader = TextView(context).apply {
+                    text = "SÜRE DOLDU"
+                    setTextColor(Color.WHITE)
+                    textSize = 40f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    gravity = Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        setMargins(0, 0, 0, 24)
+                    }
+                }
+                
+                val tvDesc = TextView(context).apply {
+                    text = "$appName kilitlendi.\nBugünlük irade sınırınızı doldurdunuz."
+                    setTextColor(Color.parseColor("#FFCDD2"))
+                    textSize = 16f
+                    gravity = Gravity.CENTER
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        setMargins(0, 0, 0, 80)
+                    }
+                }
+                
+                val btnHome = Button(context).apply {
+                    text = "ANA EKRANA DÖN"
+                    setBackgroundColor(Color.WHITE)
+                    setTextColor(Color.parseColor("#B71C1C"))
+                    textSize = 16f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    setPadding(60, 40, 60, 40)
+                    setOnClickListener {
+                        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                            addCategory(Intent.CATEGORY_HOME)
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        startActivity(homeIntent)
+                    }
+                }
+                
+                addView(tvHeader)
+                addView(tvDesc)
+                addView(btnHome)
+            }
+            
+            overlayView = layout
+            try {
+                windowManager?.addView(overlayView, params)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                isOverlayShowing = false
+            }
+        }
+    }
+
+    private fun removeOverlay() {
+        if (!isOverlayShowing) return
+        isOverlayShowing = false
+
+        Handler(Looper.getMainLooper()).post {
+            if (overlayView != null) {
+                try {
+                    windowManager?.removeView(overlayView)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+                overlayView = null
+            }
+        }
+    }
+
     private fun getForegroundPackage(): String? {
         val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return null
         val time = System.currentTimeMillis()
         
-        // Son 1 dakikadaki eventlere bak (Çok hızlı bir işlemdir)
+        // Son 1 dakikadaki eventlere bak
         val usageEvents = usm.queryEvents(time - 1000 * 60, time)
         val event = UsageEvents.Event()
         
@@ -195,7 +292,6 @@ class BlockOverlayService : Service() {
         
         while (usageEvents.hasNextEvent()) {
             usageEvents.getNextEvent(event)
-            // Sadece Activity'nin ekrana gelme (RESUMED) olayını takip et
             if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
                 currentForegroundApp = event.packageName
             }
@@ -207,7 +303,7 @@ class BlockOverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isServiceRunning = false
-        isBlockActivityShown = false
+        removeOverlay()
         serviceJob.cancel()
     }
 }
