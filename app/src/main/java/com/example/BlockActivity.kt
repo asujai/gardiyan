@@ -40,10 +40,14 @@ import kotlinx.coroutines.launch
 class BlockActivity : ComponentActivity() {
 
     private lateinit var repository: GuardianRepository
+    private val serviceScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Servis tarafından birden fazla açılma engeli
+        BlockOverlayService.isBlockActivityShown = true
+
         // Anti-Screen Capture (FLAG_SECURE) applied for MVP Observer Mode privacy guarantee
         window.setFlags(
             WindowManager.LayoutParams.FLAG_SECURE,
@@ -81,10 +85,10 @@ class BlockActivity : ComponentActivity() {
                             serviceScope.launch {
                                 repository.failActiveTarget()
                                 runOnUiThread {
-                                    Toast.makeText(
+                                    android.widget.Toast.makeText(
                                         this@BlockActivity,
                                         "İraden yenildi! Seviyen sıfırlandı. Sosyal rehineler gönderildi.",
-                                        Toast.LENGTH_LONG
+                                        android.widget.Toast.LENGTH_LONG
                                     ).show()
                                     finish()
                                 }
@@ -96,7 +100,27 @@ class BlockActivity : ComponentActivity() {
         }
     }
 
-    private val serviceScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
+    /**
+     * Geri tuşunu engelle: Kullanıcı geri tuşuna basarak blok ekranını kapatamaz.
+     * Bunun yerine ana ekrana yönlendirilir.
+     */
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        startActivity(homeIntent)
+        // finish() çağrılmıyor: Activity stack'te kalıyor,
+        // kullanıcı hedef uygulamaya dönemez
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Flag sıfırla: Servis bir sonraki erişimde tekrar açabilsin
+        BlockOverlayService.isBlockActivityShown = false
+        serviceScope.cancel()
+    }
 }
 
 @OptIn(ExperimentalAnimationApi::class)

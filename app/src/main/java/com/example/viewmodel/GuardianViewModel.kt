@@ -136,12 +136,33 @@ class GuardianViewModel(context: Context) : ViewModel() {
     }
 
     /**
+     * Servis çöktüyse ve aktif oturum varsa yeniden başlatır.
+     * MainActivity.onResume() tarafından çağrılır.
+     */
+    fun restartServiceIfNeeded(context: Context) {
+        viewModelScope.launch {
+            val session = repository.getSessionSync()
+            if (session != null && session.isActive && !BlockOverlayService.isServiceRunning) {
+                toggleMonitoringService(context, true)
+            }
+        }
+    }
+
+
+    /**
      * Controls foreground application scanning and overlay trigger service
      */
     fun toggleMonitoringService(context: Context, enable: Boolean) {
         val serviceIntent = Intent(context, BlockOverlayService::class.java)
         if (enable) {
-            context.startService(serviceIntent)
+            // Android 8+ (API 26+) için startForegroundService gereklidir.
+            // startService() çağrısı arka plandan yapıldığında sistem tarafından
+            // reddedilir ve servis hiç başlamaz.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
             _isMonitoringActive.value = true
         } else {
             context.stopService(serviceIntent)

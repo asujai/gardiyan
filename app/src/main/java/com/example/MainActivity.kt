@@ -122,8 +122,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Simple trick to force re-evaluation of service/overlay status in logs
-        BlockOverlayService.isServiceRunning = BlockOverlayService.isServiceRunning
+        // Servis çöktüyse ve aktif oturum varsa otomatik yeniden başlat
+        if (!BlockOverlayService.isServiceRunning) {
+            val viewModelFactory = GuardianViewModelFactory(applicationContext)
+            val vm = androidx.lifecycle.ViewModelProvider(this, viewModelFactory)[GuardianViewModel::class.java]
+            vm.restartServiceIfNeeded(applicationContext)
+        }
     }
 }
 
