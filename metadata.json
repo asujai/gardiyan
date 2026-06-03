@@ -1,0 +1,6 @@
+{
+  "name": "Gardiyan",
+  "description": "Erteleme hastalığını engelleyen tavizsiz dijital gardiyan uygulaması.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
