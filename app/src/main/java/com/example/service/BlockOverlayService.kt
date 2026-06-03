@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -8,18 +9,9 @@ import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
-import android.graphics.PixelFormat
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
-import android.view.Gravity
-import android.view.View
-import android.view.WindowManager
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.TextView
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.example.MainActivity
@@ -34,9 +26,6 @@ class BlockOverlayService : Service() {
     private var trackingJob: Job? = null
 
     private var lastForegroundPackage: String = ""
-    private var windowManager: WindowManager? = null
-    private var overlayView: View? = null
-    private var isOverlayShowing = false
     private var isCurrentlyBlocked = false
 
     companion object {
@@ -56,7 +45,32 @@ class BlockOverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Servisin Android tarafından öldürülürse yeniden başlatılmasını ister
         return START_STICKY
+    }
+
+    /**
+     * UYGULAMA RECENT APPS'TEN KAPATILDIĞINDA (SWIPE TO DISMISS) ÇALIŞIR
+     * Servisin ölümsüz olması (hemen tekrar canlanması) için AlarmManager kullanıyoruz.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        
+        val restartServiceIntent = Intent(applicationContext, BlockOverlayService::class.java).also {
+            it.setPackage(packageName)
+        }
+        
+        val restartServicePendingIntent = PendingIntent.getService(
+            this, 1, restartServiceIntent,
+            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+        )
+        
+        val alarmService = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        alarmService.set(
+            AlarmManager.ELAPSED_REALTIME,
+            SystemClock.elapsedRealtime() + 1000,
+            restartServicePendingIntent
+        )
     }
 
     private fun startForegroundCompat() {
@@ -102,8 +116,8 @@ class BlockOverlayService : Service() {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // APP LOCKER MIMARISI (OVERLAY)
-    // 250ms döngü ile hedefe girildiği "an" silinemez kırmızı perde indirilir.
+    // FORCE HOME (ANA EKRANA FIRLATMA) MİMARİSİ
+    // 250ms döngü ile hedefe girildiği "an" kullanıcı ana ekrana geri fırlatılır.
     // ─────────────────────────────────────────────────────────────────
     private fun startTracking() {
         trackingJob = serviceScope.launch {
@@ -146,29 +160,25 @@ class BlockOverlayService : Service() {
                                 }
                             }
 
-                            // Süre bitmişse OVERLAY BASTIR
+                            // Süre bitmişse ZORLA ANA EKRANA FIRLAT
                             if (remainingSeconds <= 0) {
-                                showOverlay(session.targetAppName)
+                                forceHomeScreen()
                                 
                                 if (!isCurrentlyBlocked) {
                                     isCurrentlyBlocked = true
                                     repository.insertLog(
                                         eventType = "BLOCKED",
                                         appName = session.targetAppName,
-                                        details = "Uygulama tam ekran maskelendi (Süre doldu)."
+                                        details = "Süre doldu, kullanıcı ana ekrana fırlatıldı."
                                     )
                                 }
                             }
                         } else {
-                            // Hedef uygulamadan çıkıldığı an maskeyi kaldır (Anında tepki)
-                            removeOverlay()
+                            // Hedef uygulamadan çıkıldığı an bayrağı temizle
                             isCurrentlyBlocked = false
-                            
                             // Tick süresini senkronize et ki uygulamaya girince direkt 1 sn gitmesin
                             lastSecondTick = System.currentTimeMillis()
                         }
-                    } else {
-                        removeOverlay()
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -180,104 +190,16 @@ class BlockOverlayService : Service() {
         }
     }
 
-    private fun showOverlay(appName: String) {
-        if (isOverlayShowing) return
-        isOverlayShowing = true // Çift çağrıyı hemen engelle
-
-        Handler(Looper.getMainLooper()).post {
-            if (overlayView != null) return@post
-
-            windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-            
-            // LayoutParams.FLAG_LAYOUT_IN_SCREEN | FLAG_NOT_TOUCH_MODAL (Kullanıcı arkaya tıklayamasın diye modal değil, odak alabilen tam ekran)
-            val params = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                else
-                    @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT
-            )
-            
-            val layout = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.parseColor("#B71C1C")) // Koyu Kırmızı / Danger
-                gravity = Gravity.CENTER
-                
-                val tvHeader = TextView(context).apply {
-                    text = "SÜRE DOLDU"
-                    setTextColor(Color.WHITE)
-                    textSize = 40f
-                    setTypeface(null, android.graphics.Typeface.BOLD)
-                    gravity = Gravity.CENTER
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        setMargins(0, 0, 0, 24)
-                    }
-                }
-                
-                val tvDesc = TextView(context).apply {
-                    text = "$appName kilitlendi.\nBugünlük irade sınırınızı doldurdunuz."
-                    setTextColor(Color.parseColor("#FFCDD2"))
-                    textSize = 16f
-                    gravity = Gravity.CENTER
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        setMargins(0, 0, 0, 80)
-                    }
-                }
-                
-                val btnHome = Button(context).apply {
-                    text = "ANA EKRANA DÖN"
-                    setBackgroundColor(Color.WHITE)
-                    setTextColor(Color.parseColor("#B71C1C"))
-                    textSize = 16f
-                    setTypeface(null, android.graphics.Typeface.BOLD)
-                    setPadding(60, 40, 60, 40)
-                    setOnClickListener {
-                        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-                            addCategory(Intent.CATEGORY_HOME)
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-                        startActivity(homeIntent)
-                    }
-                }
-                
-                addView(tvHeader)
-                addView(tvDesc)
-                addView(btnHome)
-            }
-            
-            overlayView = layout
-            try {
-                windowManager?.addView(overlayView, params)
-            } catch (e: Exception) {
-                e.printStackTrace()
-                isOverlayShowing = false
-            }
+    /**
+     * Kullanıcıyı zorla Android Ana Ekranına (Home) gönderir.
+     * Bu sayede "Diğer uygulamaların üzerinde göster" (Overlay) bildirimleri çıkmaz.
+     */
+    private fun forceHomeScreen() {
+        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
-    }
-
-    private fun removeOverlay() {
-        if (!isOverlayShowing) return
-        isOverlayShowing = false
-
-        Handler(Looper.getMainLooper()).post {
-            if (overlayView != null) {
-                try {
-                    windowManager?.removeView(overlayView)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-                overlayView = null
-            }
-        }
+        startActivity(homeIntent)
     }
 
     private fun getForegroundPackage(): String? {
@@ -303,7 +225,6 @@ class BlockOverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isServiceRunning = false
-        removeOverlay()
         serviceJob.cancel()
     }
 }
