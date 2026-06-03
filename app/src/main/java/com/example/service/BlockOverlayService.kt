@@ -143,7 +143,7 @@ class BlockOverlayService : Service() {
                             val isExpired = remainingMinutes <= 0
 
                             // ─── FOREGROUND UYGULAMA TESPİTİ ───
-                            val foregroundPkg = getForegroundPackageName() ?: ""
+                            val foregroundPkg = getUpdatedForegroundPackageName() ?: ""
 
                             // Hedef uygulamanın kullanımda olup olmadığını kontrol et
                             val isUsingTargetApp = foregroundPkg.isNotEmpty() &&
@@ -212,66 +212,40 @@ class BlockOverlayService : Service() {
         return cal.get(Calendar.DAY_OF_YEAR)
     }
 
+    private var currentForegroundApp: String? = null
+    private var lastEventTime: Long = 0L
+
     /**
-     * DÜZELTME: Son 15s → Son 3s + MOVE_TO_FOREGROUND fallback.
-     *
-     * Önceki implementasyon son 15 saniyeye bakıyordu. Kullanıcı bir uygulamayı
-     * açıp 15 saniyeden fazla hareketsiz kaldıysa ACTIVITY_RESUMED eventi
-     * pencereye girmiyordu ve fonksiyon null dönüyordu. Bu durumda takip
-     * tamamen duruyordu. Şimdi:
-     * 1. Son 3 saniyede ACTIVITY_RESUMED ara
-     * 2. Bulamazsan son 5 saniyede MOVE_TO_FOREGROUND ara (aktif uygulama tespiti)
-     * 3. Yine bulamazsan son 1 dakikadaki son ACTIVITY_RESUMED'u döndür (yedek)
+     * STATEFUL TRACKING: Uygulamanın ne kadar süre açık kaldığını doğru hesaplamak için,
+     * her 1 saniyede sadece yeni event'leri okuyarak 'currentForegroundApp' durumunu güncelleriz.
+     * Servis ilk çalıştığında son 24 saati tarayıp şu an açık olan uygulamayı bulur.
      */
-    private fun getForegroundPackageName(): String? {
-        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return null
+    private fun getUpdatedForegroundPackageName(): String? {
+        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return currentForegroundApp
         val now = System.currentTimeMillis()
 
-        // 1. Aşama: Son 3 saniyede ACTIVITY_RESUMED
-        val events3s = try { usm.queryEvents(now - 3_000, now) } catch (e: Exception) { null }
-        if (events3s != null) {
-            var lastPkg: String? = null
+        // İlk çalıştırmada son 24 saati tara, aksi halde sadece son okumadan sonrakileri tara
+        val startTime = if (lastEventTime == 0L) now - (24 * 60 * 60 * 1000L) else lastEventTime
+
+        val events = try { usm.queryEvents(startTime, now) } catch (e: Exception) { null }
+        if (events != null) {
             val event = UsageEvents.Event()
-            while (events3s.hasNextEvent()) {
-                events3s.getNextEvent(event)
-                if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
-                    lastPkg = event.packageName
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                if (event.timeStamp > lastEventTime) {
+                    if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
+                        currentForegroundApp = event.packageName
+                    } else if (event.eventType == UsageEvents.Event.ACTIVITY_PAUSED ||
+                               event.eventType == UsageEvents.Event.ACTIVITY_STOPPED) {
+                        if (currentForegroundApp == event.packageName) {
+                            currentForegroundApp = null
+                        }
+                    }
+                    lastEventTime = event.timeStamp
                 }
             }
-            if (lastPkg != null) return lastPkg
         }
-
-        // 2. Aşama: Son 5 saniyede MOVE_TO_FOREGROUND (bazı cihazlarda kullanılır)
-        val events5s = try { usm.queryEvents(now - 5_000, now) } catch (e: Exception) { null }
-        if (events5s != null) {
-            var lastPkg: String? = null
-            val event = UsageEvents.Event()
-            while (events5s.hasNextEvent()) {
-                events5s.getNextEvent(event)
-                @Suppress("DEPRECATION")
-                if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND ||
-                    event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
-                    lastPkg = event.packageName
-                }
-            }
-            if (lastPkg != null) return lastPkg
-        }
-
-        // 3. Aşama: Son 1 dakika içindeki en son ACTIVITY_RESUMED (yedek)
-        val events60s = try { usm.queryEvents(now - 60_000, now) } catch (e: Exception) { null }
-        if (events60s != null) {
-            var lastPkg: String? = null
-            val event = UsageEvents.Event()
-            while (events60s.hasNextEvent()) {
-                events60s.getNextEvent(event)
-                if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
-                    lastPkg = event.packageName
-                }
-            }
-            if (lastPkg != null) return lastPkg
-        }
-
-        return null
+        return currentForegroundApp
     }
 
     override fun onDestroy() {

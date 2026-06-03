@@ -121,7 +121,6 @@ class BlockActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun BlockScreenContent(
     appName: String,
@@ -129,321 +128,90 @@ fun BlockScreenContent(
     onGoHome: () -> Unit,
     onUnlockFailPenalty: () -> Unit
 ) {
-    val context = LocalContext.current
-    var isHoldUiVisible by remember { mutableStateOf(false) }
-
-    // Hold to bypass state variables
-    var holdDurationMs by remember { mutableStateOf(0L) }
-    var isPressing by remember { mutableStateOf(false) }
-
-    val maxHoldTimeMs = 60000L
-    val targetTimeMs = maxHoldTimeMs
-    val progress = (holdDurationMs.toFloat() / targetTimeMs).coerceIn(0f, 1f)
-
-    val coroutineScope = rememberCoroutineScope()
-    var timerJob = remember<Job?> { null }
-
-    // Clean up timer job if recomposed out of pressing states
-    LaunchedEffect(isPressing) {
-        if (isPressing) {
-            val stepTime = 50L
-            timerJob = launch {
-                while (holdDurationMs < targetTimeMs) {
-                    delay(stepTime)
-                    holdDurationMs += stepTime
-                }
-                // If we reach the target time, trigger unlock failure action
-                onUnlockFailPenalty()
-            }
-        } else {
-            timerJob?.cancel()
-            holdDurationMs = 0L
-        }
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
             .padding(24.dp),
         contentAlignment = Alignment.Center
     ) {
-        if (!isHoldUiVisible) {
-            // Main Locked Layout
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            // Header
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.padding(top = 60.dp)
             ) {
-                // Header (Brutalist Strict Style)
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(top = 40.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Warning,
-                        contentDescription = "Engellendi",
-                        tint = DangerRed,
-                        modifier = Modifier.size(64.dp)
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "İRADE DUVARI",
-                        style = MaterialTheme.typography.headlineMedium.copy(
-                            fontWeight = FontWeight.ExtraBold,
-                            fontFamily = FontFamily.Monospace,
-                            color = DangerRed,
-                            letterSpacing = 4.sp
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "DİJİTAL GARDİYAN SİSTEMİ",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontFamily = FontFamily.Monospace,
-                            color = MutedGray,
-                            letterSpacing = 2.sp
-                        )
-                    )
-                }
-
-                // Middle Info Card
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
-                ) {
-                    Text(
-                        text = "\"$appName\" Engel Altında",
-                        color = PureWhite,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    Text(
-                        text = "Profil rütbenizin ve koyduğunuz hedefin kilitli yapısı gereği bu uygulamaya erişiminiz GARDİYAN tarafından engellenmiştir.",
-                        color = MutedGray,
-                        fontSize = 13.sp,
-                        fontFamily = FontFamily.Monospace,
-                        textAlign = TextAlign.Center,
-                        lineHeight = 20.sp
-                    )
-
-                    if (session != null && session.isObserverMode) {
-                        Spacer(modifier = Modifier.height(24.dp))
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(SoftDangerRed)
-                                .border(1.dp, DangerRed, RoundedCornerShape(12.dp))
-                                .padding(14.dp)
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    text = "⚠️ GÖZETMEN MODU AKTİF",
-                                    color = DangerRed,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = "Kilidi kırmak veya pes etmek, 'Kırmızı Utanç Rozeti' almanıza ve seçtiğiniz şu utanç verici içeriğin arkadaşınıza (${session.observerContactName}) hediye edilmesine sebep olacaktır:",
-                                    color = PureWhite,
-                                    fontSize = 10.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    textAlign = TextAlign.Center,
-                                    lineHeight = 14.sp
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "\"${session.shameMessage.ifEmpty { "Utanç Verici Secret" }}\"",
-                                    color = DangerRed,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Bottom Buttons
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp)
-                ) {
-                    Button(
-                        onClick = onGoHome,
-                        shape = RoundedCornerShape(999.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = PureWhite,
-                            contentColor = PureBlack
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp)
-                    ) {
-                        Text(
-                            text = "HEDEFE SADIK KAL (UYGULAMADAN ÇIK)",
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    TextButton(
-                        onClick = { isHoldUiVisible = true },
-                        modifier = Modifier.padding(8.dp)
-                    ) {
-                        Text(
-                            text = "KİLİDİ KIR (PES ET)",
-                            color = MutedGray,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp
-                        )
-                    }
-                }
-            }
-        } else {
-            // Intense hold to unlock screen panel
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(vertical = 20.dp)
-            ) {
-                // Warning text
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "PES ETME DİSİPLİN SINAVI",
-                        color = DangerRed,
-                        fontSize = 18.sp,
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = "Engellendi",
+                    tint = DangerRed,
+                    modifier = Modifier.size(64.dp)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "SÜRE DOLDU",
+                    style = MaterialTheme.typography.headlineMedium.copy(
                         fontWeight = FontWeight.ExtraBold,
                         fontFamily = FontFamily.Monospace,
-                        letterSpacing = 2.sp
+                        color = DangerRed,
+                        letterSpacing = 4.sp
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Parmağını aşağıdaki butona basılı tut. Kesintisiz 60 saniye boyunca butonun üzerinde kalmalısın. Parmağını anlık çekersen süre tamamen sıfırlanır.",
-                        color = MutedGray,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
-                }
+                )
+            }
 
-                // Interactive Circle hold trigger zone
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.weight(1f)
+            // Middle Info Card
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+            ) {
+                Text(
+                    text = "$appName",
+                    color = PureWhite,
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Text(
+                    text = "Bugün bu uygulama için ayırdığınız günlük süreyi doldurdunuz. İradenize sadık kalın ve uygulamayı kapatın.",
+                    color = MutedGray,
+                    fontSize = 14.sp,
+                    fontFamily = FontFamily.Monospace,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 22.sp
+                )
+            }
+
+            // Bottom Button
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 40.dp)
+            ) {
+                Button(
+                    onClick = onGoHome,
+                    shape = RoundedCornerShape(999.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PureWhite,
+                        contentColor = PureBlack
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
                 ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(240.dp)
-                            .clip(CircleShape)
-                            .background(if (isPressing) SoftDangerRed else Color(0xFF0C0C0C))
-                            .border(2.dp, if (isPressing) DangerRed else Color(0xFF1E1E1E), CircleShape)
-                            // Custom touch listner
-                            .pointerInput(Unit) {
-                                detectTapGestures(
-                                    onPress = {
-                                        isPressing = true
-                                        try {
-                                            awaitRelease()
-                                        } finally {
-                                            isPressing = false
-                                        }
-                                    }
-                                )
-                            }
-                    ) {
-                        // Circular progress overlay
-                        CircularProgressIndicator(
-                            progress = progress,
-                            modifier = Modifier.fillMaxSize().padding(12.dp),
-                            color = DangerRed,
-                            strokeWidth = 6.dp,
-                            trackColor = Color.Transparent,
-                        )
-
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = if (isPressing) "HEDEF BOZULUYOR" else "DOKUN VE BEKLE",
-                                color = if (isPressing) DangerRed else PureWhite,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 12.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            val secondsLeft = (targetTimeMs - holdDurationMs) / 1000f
-                            Text(
-                                text = String.format("%.1f Sn", secondsLeft.coerceIn(0f, targetTimeMs / 1000f)),
-                                color = PureWhite,
-                                fontSize = 32.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Kalan",
-                                color = MutedGray,
-                                fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    if (!isPressing && holdDurationMs == 0L) {
-                        Text(
-                            text = "[ PARMAĞINI BUTONDAN HİÇ ÇEKME ]",
-                            color = MutedGray,
-                            fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    } else if (isPressing) {
-                        Text(
-                            text = "🔥 VAZGEÇMEK İÇİN BASILI TUTUYORSUN...",
-                            color = DangerRed,
-                            fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-                }
-
-                // Back action Column
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Button(
-                        onClick = { isHoldUiVisible = false },
-                        shape = RoundedCornerShape(999.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF1E1E1E),
-                            contentColor = PureWhite
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                    ) {
-                        Text(
-                            text = "GÖREVE GERİ DÖN",
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
-                        )
-                    }
+                    Text(
+                        text = "UYGULAMADAN ÇIK",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
                 }
             }
         }
     }
 }
+
