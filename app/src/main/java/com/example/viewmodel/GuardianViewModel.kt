@@ -20,6 +20,8 @@ import com.example.service.BlockOverlayService
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
+import com.example.data.local.entity.AppRestrictionEntity
+
 class GuardianViewModel(context: Context) : ViewModel() {
 
     private val db = GuardianDatabase.getDatabase(context.applicationContext)
@@ -34,6 +36,13 @@ class GuardianViewModel(context: Context) : ViewModel() {
         )
 
     val allLogs: StateFlow<List<StatusLogEntity>> = repository.allLogs
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val allAppRestrictions: StateFlow<List<AppRestrictionEntity>> = repository.allAppRestrictions
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -98,6 +107,18 @@ class GuardianViewModel(context: Context) : ViewModel() {
         _observerContactName.value = name
     }
 
+    fun toggleAppRestriction(restriction: AppRestrictionEntity) {
+        viewModelScope.launch {
+            repository.saveAppRestriction(restriction.copy(isActive = !restriction.isActive))
+        }
+    }
+    
+    fun removeAppRestriction(restriction: AppRestrictionEntity) {
+        viewModelScope.launch {
+            repository.deleteAppRestriction(restriction)
+        }
+    }
+
     /**
      * Start the objective and commit session configuration to DB
      */
@@ -105,16 +126,22 @@ class GuardianViewModel(context: Context) : ViewModel() {
         viewModelScope.launch {
             val session = repository.getSessionSync() ?: UserSessionEntity()
             
+            // App Restriction olarak kaydet
+            val restriction = AppRestrictionEntity(
+                packageName = _targetAppPackage.value,
+                appName = _targetAppName.value,
+                dailyLimitMinutes = _dailyLimitMinutes.value,
+                remainingMinutesToday = _dailyLimitMinutes.value,
+                remainingSecondsToday = _dailyLimitMinutes.value * 60,
+                isActive = true
+            )
+            repository.saveAppRestriction(restriction)
+
             // Build unique observer invite link for simulation V2
             val inviteLink = "https://gardiyan.app/invite/user_${System.currentTimeMillis()}"
 
             val updatedSession = session.copy(
                 isActive = true,
-                targetAppName = _targetAppName.value,
-                targetAppPackage = _targetAppPackage.value,
-                dailyLimitMinutes = _dailyLimitMinutes.value,
-                remainingMinutesToday = _dailyLimitMinutes.value,
-                remainingSecondsToday = _dailyLimitMinutes.value * 60,
                 isObserverMode = _isObserverMode.value,
                 shameMessage = _shameMessage.value,
                 observerContactName = _observerContactName.value,

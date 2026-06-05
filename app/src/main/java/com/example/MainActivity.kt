@@ -12,8 +12,6 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -45,9 +43,8 @@ import com.example.ui.theme.*
 import com.example.viewmodel.GuardianViewModel
 import com.example.viewmodel.GuardianViewModelFactory
 import com.example.service.BlockOverlayService
-
-// Multi-Screen Routes Definitions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 const val ROUTE_PERMISSIONS = "permissions"
@@ -122,7 +119,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Servis çöktüyse ve aktif oturum varsa otomatik yeniden başlat
         if (!BlockOverlayService.isServiceRunning) {
             val viewModelFactory = GuardianViewModelFactory(applicationContext)
             val vm = androidx.lifecycle.ViewModelProvider(this, viewModelFactory)[GuardianViewModel::class.java]
@@ -144,12 +140,11 @@ fun MainNavigationContent(
     var isOverlayEnabled by remember { mutableStateOf(viewModel.hasOverlayPermission(context)) }
     var isUsageEnabled by remember { mutableStateOf(viewModel.hasUsageStatsPermission(context)) }
 
-    // Periodically recheck permissions when app is active
     LaunchedEffect(Unit) {
         while (true) {
             isOverlayEnabled = viewModel.hasOverlayPermission(context)
             isUsageEnabled = viewModel.hasUsageStatsPermission(context)
-            kotlinx.coroutines.delay(1000)
+            delay(1000)
         }
     }
 
@@ -173,13 +168,13 @@ fun MainNavigationContent(
         bottomBar = {
             if (hasAllPermissions && (currentRoute == ROUTE_DASHBOARD || currentRoute == ROUTE_SETTINGS)) {
                 NavigationBar(
-                    containerColor = DarkCharcoal, // White surface card background in light theme
+                    containerColor = DarkCharcoal,
                     tonalElevation = 6.dp,
                     modifier = Modifier.border(width = 1.dp, color = BorderGray)
                 ) {
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.Home, contentDescription = "Dashboard") },
-                        label = { Text("Ana Ekran", fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                        label = { Text("Ana Ekran", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
                         selected = currentRoute == ROUTE_DASHBOARD,
                         onClick = {
                             if (currentRoute != ROUTE_DASHBOARD) {
@@ -201,7 +196,7 @@ fun MainNavigationContent(
 
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.Settings, contentDescription = "Settings/Profile") },
-                        label = { Text("Profil & Ayarlar", fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                        label = { Text("Profil & Ayarlar", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
                         selected = currentRoute == ROUTE_SETTINGS,
                         onClick = {
                             if (currentRoute != ROUTE_SETTINGS) {
@@ -291,7 +286,6 @@ fun PermissionsScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        // Aesthetic Top Header Icon representing security shield
         Box(
             modifier = Modifier
                 .size(72.dp)
@@ -321,7 +315,7 @@ fun PermissionsScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Gardiyan'ın kilitleri interceptor ile algılayıp çalıştırabilmesi için aşağıdaki sistem düzeyindeki iki izne ihtiyacı vardır.",
+            text = "Gardiyan'ın kilitleri algılayıp çalıştırabilmesi için aşağıdaki sistem düzeyindeki iki izne ihtiyacı vardır.",
             textAlign = TextAlign.Center,
             fontFamily = FontFamily.SansSerif,
             fontSize = 12.sp,
@@ -332,7 +326,6 @@ fun PermissionsScreen(
 
         Spacer(modifier = Modifier.height(28.dp))
 
-        // Card containing individual settings details
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -344,7 +337,6 @@ fun PermissionsScreen(
                 modifier = Modifier.padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // ROW 1: Usage Stats
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -388,7 +380,6 @@ fun PermissionsScreen(
 
                 HorizontalDivider(color = BorderGray, thickness = 1.dp)
 
-                // ROW 2: Overlay Draw Overlays
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -434,14 +425,11 @@ fun PermissionsScreen(
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        // Redirection / Enter Button
         Button(
-            onClick = {
-                onNavigateToDashboard()
-            },
+            onClick = onNavigateToDashboard,
             enabled = isOverlayEnabled && isUsageEnabled,
             colors = ButtonDefaults.buttonColors(
-                containerColor = PureWhite, // Mint Green / Primary Accent
+                containerColor = PureWhite,
                 contentColor = Color.White,
                 disabledContainerColor = Color(0xFFDFDFDF),
                 disabledContentColor = Color(0xFFAFAFAF)
@@ -463,7 +451,7 @@ fun PermissionsScreen(
 }
 
 // ==========================================
-// SCREEN 2: MINIMALIST DASHBOARD SCREEN
+// SCREEN 2: MINIMALIST DASHBOARD SCREEN (RE-DESIGNED)
 // ==========================================
 @Composable
 fun DashboardScreen(
@@ -471,183 +459,208 @@ fun DashboardScreen(
     onNavigateToSetup: () -> Unit
 ) {
     val session by viewModel.userSession.collectAsState()
+    val allAppRestrictions by viewModel.allAppRestrictions.collectAsState()
 
-    Scaffold(
-        floatingActionButton = {
-            if (session?.isActive != true) {
-                FloatingActionButton(
-                    onClick = onNavigateToSetup,
-                    containerColor = PureWhite, // Mint Teal
-                    contentColor = Color.White,
-                    shape = CircleShape,
-                    modifier = Modifier.padding(bottom = 12.dp)
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MatteSurface)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item {
+            HeaderSection(session = session)
+        }
+
+        // Geniş modern CTA Butonu (Eski "+" FAB butonunun yerine) - HER ZAMAN GÖRÜNÜR
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, BorderGray, RoundedCornerShape(20.dp))
+                    .clickable { onNavigateToSetup() },
+                colors = CardDefaults.cardColors(containerColor = DarkCharcoal),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = "Hedef Kilit Ekle Setup")
-                }
-            }
-        },
-        containerColor = MatteSurface
-    ) { paddingValues ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // App Branding Header View
-            item {
-                HeaderSection(session = session)
-            }
-
-            if (session?.isActive == true) {
-                item {
-                    val activeSession = session!!
-                    // Circular countdown and target name layout
-                    Card(
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Yeni Kısıtlama Başlat",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PureBlack
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "İradeni güçlendirmek için yeni bir kısıtlama sözleşmesi kur.",
+                            fontSize = 11.sp,
+                            color = MutedGray
+                        )
+                    }
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, BorderGray, RoundedCornerShape(24.dp)),
-                        colors = CardDefaults.cardColors(containerColor = DarkCharcoal),
-                        shape = RoundedCornerShape(24.dp)
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(SoftDangerRed),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(20.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = "GÜNLÜK KALAN KULLANIM SÜRESİ",
-                                fontSize = 9.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = MutedGray,
-                                letterSpacing = 1.5.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-
-                            Spacer(modifier = Modifier.height(24.dp))
-
-                            // Circular visualizer progress container
-                            Box(
-                                modifier = Modifier.size(200.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                // Outer light circle decoration
-                                Box(
-                                    modifier = Modifier
-                                        .size(190.dp)
-                                        .border(2.dp, BorderGray, CircleShape)
-                                )
-
-                                val progressVal = if (activeSession.dailyLimitMinutes > 0) {
-                                    (activeSession.remainingSecondsToday.toFloat() / (activeSession.dailyLimitMinutes * 60).toFloat()).coerceIn(0f, 1f)
-                                } else {
-                                    0f
-                                }
-
-                                CircularProgressIndicator(
-                                    progress = { progressVal },
-                                    modifier = Modifier
-                                        .size(190.dp)
-                                        .graphicsLayer(rotationZ = -90f),
-                                    color = PureWhite,
-                                    strokeWidth = 4.dp,
-                                    trackColor = Color.Transparent
-                                )
-
-                                val totalSecs = activeSession.remainingSecondsToday.coerceAtLeast(0)
-                                val mm = totalSecs / 60
-                                val ss = totalSecs % 60
-
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text(
-                                        text = String.format("%02d:%02d", mm, ss),
-                                        fontSize = 44.sp,
-                                        fontWeight = FontWeight.ExtraLight,
-                                        color = if (totalSecs <= 0) DangerRed else PureBlack
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = "DAKİKA : SANİYE",
-                                        fontSize = 9.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = MutedGray,
-                                        fontWeight = FontWeight.Bold,
-                                        letterSpacing = 1.sp
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(24.dp))
-
-                            // Highlight active target application in custom style
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(SoftDangerRed.copy(alpha = 0.5f))
-                                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = "${activeSession.targetAppName.uppercase()} ENGELİ AKTİF",
-                                    fontSize = 10.sp,
-                                    color = DangerRed,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.5.sp
-                                )
-                            }
-                        }
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = null,
+                            tint = DangerRed,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
+            }
+        }
 
-                // Kaldırılan gözetmen ve rozet UI kısımları
-            } else {
-                // Empty Rest State view
-                item {
+        if (allAppRestrictions.isNotEmpty()) {
+            items(allAppRestrictions) { restriction ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, BorderGray, RoundedCornerShape(24.dp)),
+                    colors = CardDefaults.cardColors(containerColor = DarkCharcoal),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 48.dp),
+                            .padding(20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        IconButton(
-                            onClick = onNavigateToSetup,
-                            modifier = Modifier
-                                .size(84.dp)
-                                .clip(CircleShape)
-                                .background(BorderGray)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = null,
-                                tint = SuccessGreen,
-                                modifier = Modifier.size(36.dp)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                AppIconView(packageName = restriction.packageName, modifier = Modifier.size(24.dp))
+                                Text(
+                                    text = restriction.appName.uppercase(),
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MutedGray,
+                                    letterSpacing = 1.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Switch(
+                                checked = restriction.isActive,
+                                onCheckedChange = { viewModel.toggleAppRestriction(restriction) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = PureWhite,
+                                    checkedTrackColor = SuccessGreen,
+                                    uncheckedThumbColor = MutedGray,
+                                    uncheckedTrackColor = BorderGray
+                                )
                             )
                         }
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        Text(
-                            text = "SERBEST VE GÜVENLİ SÖRİF",
-                            fontSize = 13.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = PureBlack
-                        )
+                        Box(
+                            modifier = Modifier.size(140.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(130.dp)
+                                    .border(2.dp, BorderGray, CircleShape)
+                            )
 
-                        Spacer(modifier = Modifier.height(6.dp))
+                            val progressVal = if (restriction.dailyLimitMinutes > 0) {
+                                (restriction.remainingSecondsToday.toFloat() / (restriction.dailyLimitMinutes * 60).toFloat()).coerceIn(0f, 1f)
+                            } else {
+                                0f
+                            }
 
-                        Text(
-                            text = "Korumaya alınmış aktif bir kilit bulunmamaktadır. Sağ aşağıdaki '+' butonuna tıklayarak yeni bir irade sözleşmesi başlatın.",
-                            fontSize = 11.sp,
-                            color = MutedGray,
-                            textAlign = TextAlign.Center,
-                            lineHeight = 16.sp,
-                            modifier = Modifier.padding(horizontal = 24.dp)
+                            CircularProgressIndicator(
+                                progress = { progressVal },
+                                modifier = Modifier
+                                    .size(130.dp)
+                                    .graphicsLayer(rotationZ = -90f),
+                                color = if (restriction.isActive) SoftDangerRed else BorderGray,
+                                strokeWidth = 4.dp,
+                                trackColor = Color.Transparent
+                            )
+
+                            val totalSecs = restriction.remainingSecondsToday.coerceAtLeast(0)
+                            val mm = totalSecs / 60
+                            val ss = totalSecs % 60
+
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = String.format("%02d:%02d", mm, ss),
+                                    fontSize = 28.sp,
+                                    fontWeight = FontWeight.ExtraLight,
+                                    color = if (!restriction.isActive) MutedGray else if (totalSecs <= 0) DangerRed else PureBlack
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        TextButton(onClick = { viewModel.removeAppRestriction(restriction) }) {
+                            Text("SİL", color = DangerRed, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                }
+            }
+        } else {
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 48.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(84.dp)
+                            .clip(CircleShape)
+                            .background(BorderGray),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = SuccessGreen,
+                            modifier = Modifier.size(36.dp)
                         )
                     }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "SERBEST VE GÜVENLİ SÖRF",
+                        fontSize = 13.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        color = PureBlack
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Text(
+                        text = "Korumaya alınmış aktif bir kilit bulunmamaktadır. Yeni bir irade sözleşmesi başlatın.",
+                        fontSize = 11.sp,
+                        color = MutedGray,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 16.sp,
+                        modifier = Modifier.padding(horizontal = 24.dp)
+                    )
                 }
             }
         }
@@ -655,8 +668,9 @@ fun DashboardScreen(
 }
 
 // ==========================================
-// SCREEN 3: HEDEF BELİRLEME EKRANI (SETUP)
+// SCREEN 3: HEDEF BELİRLEME EKRANI (SETUP - BOTTOM SHEET & PERFORMANCE UPDATED)
 // ==========================================
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SetupTargetScreen(
     viewModel: GuardianViewModel,
@@ -667,13 +681,28 @@ fun SetupTargetScreen(
     val targetApp by viewModel.targetAppName.collectAsState()
     val targetPkg by viewModel.targetAppPackage.collectAsState()
     val durationMin by viewModel.dailyLimitMinutes.collectAsState()
-    val isObserver by viewModel.isObserverMode.collectAsState()
-    val shameMsg by viewModel.shameMessage.collectAsState()
-    val observerName by viewModel.observerContactName.collectAsState()
 
-    // Load available package matches dynamically from the ViewModel
     val availableApps = remember { viewModel.getInstalledApps(context) }
-    var isAppDropdownExpanded by remember { mutableStateOf(false) }
+    var searchAppQuery by remember { mutableStateOf("") }
+    
+    // Bottom Sheet State
+    var showAppPickerSheet by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // ChoiceChips values
+    val timeChoices = listOf(
+        Pair("1 Dk", 1),
+        Pair("15 Dk", 15),
+        Pair("30 Dk", 30),
+        Pair("60 Dk", 60)
+    )
+
+    // Slider range for custom time
+    var customDuration by remember { mutableFloatStateOf(durationMin.toFloat()) }
+
+    // Haftalık Gün Seçici (Takvim)
+    val weekdays = listOf("Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz")
+    var selectedDays by remember { mutableStateOf(setOf(0, 1, 2, 3, 4, 5, 6)) } // default: all days
 
     LazyColumn(
         modifier = Modifier
@@ -682,7 +711,6 @@ fun SetupTargetScreen(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Simple elegant display header
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -702,7 +730,7 @@ fun SetupTargetScreen(
             }
         }
 
-        // CARD SECTION 1: App Picker Selector Representation containing Iconic components
+        // BÖLÜM 1: Uygulama Seçimi (Kayıcı BottomSheet)
         item {
             Card(
                 modifier = Modifier
@@ -712,7 +740,6 @@ fun SetupTargetScreen(
                 shape = RoundedCornerShape(20.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    // Headline header
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -738,14 +765,13 @@ fun SetupTargetScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Selectable trigger field
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
                             .background(MatteSurface)
                             .border(1.dp, BorderGray, RoundedCornerShape(12.dp))
-                            .clickable { isAppDropdownExpanded = !isAppDropdownExpanded }
+                            .clickable { showAppPickerSheet = true }
                             .padding(14.dp)
                     ) {
                         Row(
@@ -759,66 +785,22 @@ fun SetupTargetScreen(
                             ) {
                                 AppIconView(packageName = targetPkg, modifier = Modifier.size(32.dp))
                                 Column {
-                                    Text(text = targetApp, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = PureBlack)
-                                    Text(text = targetPkg, fontSize = 9.sp, fontFamily = FontFamily.Monospace, color = MutedGray)
+                                    Text(text = if(targetApp.isEmpty()) "Uygulama Seçin" else targetApp, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = PureBlack)
+                                    Text(text = if(targetPkg.isEmpty()) "Henüz bir paket seçilmedi" else targetPkg, fontSize = 9.sp, fontFamily = FontFamily.Monospace, color = MutedGray)
                                 }
                             }
                             Icon(
-                                imageVector = if (isAppDropdownExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                imageVector = Icons.Default.KeyboardArrowRight,
                                 contentDescription = null,
                                 tint = MutedGray
                             )
-                        }
-                    }
-
-                    AnimatedVisibility(visible = isAppDropdownExpanded) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 10.dp)
-                                .heightIn(max = 200.dp)
-                                .verticalScroll(androidx.compose.foundation.rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            availableApps.forEach { app ->
-                                val isSelected = targetPkg == app.second
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(if (isSelected) SoftDangerRed else Color.Transparent)
-                                        .clickable {
-                                            viewModel.updateTargetApp(app.first, app.second)
-                                            isAppDropdownExpanded = false
-                                        }
-                                        .padding(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    AppIconView(packageName = app.second, modifier = Modifier.size(32.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = app.first,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                            color = PureBlack
-                                        )
-                                        Text(
-                                            text = app.second,
-                                            fontSize = 8.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = MutedGray
-                                        )
-                                    }
-                                }
-                            }
                         }
                     }
                 }
             }
         }
 
-        // CARD SECTION 2: Duration Limits Setup
+        // BÖLÜM 2: Süre Seçimi (ChoiceChips & Slider)
         item {
             Card(
                 modifier = Modifier
@@ -842,7 +824,7 @@ fun SetupTargetScreen(
                             Icon(Icons.Default.List, contentDescription = null, tint = DangerRed, modifier = Modifier.size(16.dp))
                         }
                         Text(
-                            text = "GÜNLÜK SERBEST SÜRE",
+                            text = "SERBEST SÜRE SINIRI",
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
@@ -853,36 +835,140 @@ fun SetupTargetScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    val timeChoices = listOf(
-                        Pair("Test Sörfü (1 Dk)", 1),
-                        Pair("Denge Sörfü (15 Dk)", 15),
-                        Pair("İdeal Limit (30 Dk)", 30),
-                        Pair("Standard (60 Dk)", 60)
+                    // Choice Chips
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        timeChoices.forEach { choice ->
+                            val isSelected = durationMin == choice.second
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    viewModel.updateDailyLimit(choice.second)
+                                    customDuration = choice.second.toFloat()
+                                },
+                                label = { Text(choice.first, fontSize = 12.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = PureWhite,
+                                    selectedLabelColor = Color.White,
+                                    containerColor = MatteSurface,
+                                    labelColor = PureBlack
+                                )
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "Özel Süre Belirle: ${customDuration.toInt()} Dakika",
+                        fontSize = 12.sp,
+                        color = PureBlack,
+                        fontWeight = FontWeight.Bold
                     )
 
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        timeChoices.forEach { t ->
-                            val isSelected = durationMin == t.second
-                            Row(
+                    Slider(
+                        value = customDuration,
+                        onValueChange = {
+                            customDuration = it
+                            viewModel.updateDailyLimit(it.toInt())
+                        },
+                        valueRange = 1f..120f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = PureWhite,
+                            activeTrackColor = PureWhite,
+                            inactiveTrackColor = BorderGray
+                        )
+                    )
+                }
+            }
+        }
+
+        // BÖLÜM 3: Gün ve Döngü Yönetimi (Haftalık Takvim Seçici)
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, BorderGray, RoundedCornerShape(20.dp)),
+                colors = CardDefaults.cardColors(containerColor = DarkCharcoal),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(SoftDangerRed),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.DateRange, contentDescription = null, tint = DangerRed, modifier = Modifier.size(16.dp))
+                        }
+                        Text(
+                            text = "KISITLAMA GÜNLERİ",
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = MutedGray,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Hızlı Gün Şablonları
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        AssistChip(
+                            onClick = { selectedDays = setOf(0, 1, 2, 3, 4, 5, 6) },
+                            label = { Text("Her Gün", fontSize = 11.sp) }
+                        )
+                        AssistChip(
+                            onClick = { selectedDays = setOf(0, 1, 2, 3, 4) },
+                            label = { Text("Hafta İçi", fontSize = 11.sp) }
+                        )
+                        AssistChip(
+                            onClick = { selectedDays = setOf(5, 6) },
+                            label = { Text("Hafta Sonu", fontSize = 11.sp) }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Haftanın Günleri Butonları
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        weekdays.forEachIndexed { index, day ->
+                            val isSelected = selectedDays.contains(index)
+                            Box(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(if (isSelected) MatteSurface else Color.Transparent)
-                                    .border(1.dp, if (isSelected) PureWhite else BorderGray, RoundedCornerShape(10.dp))
-                                    .clickable { viewModel.updateDailyLimit(t.second) }
-                                    .padding(12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isSelected) PureWhite else MatteSurface)
+                                    .border(1.dp, if (isSelected) PureWhite else BorderGray, CircleShape)
+                                    .clickable {
+                                        selectedDays = if (isSelected) {
+                                            selectedDays - index
+                                        } else {
+                                            selectedDays + index
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = t.first,
+                                    text = day.take(1),
                                     fontSize = 12.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = PureBlack
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) Color.White else PureBlack
                                 )
-                                if (isSelected) {
-                                    Icon(Icons.Default.Check, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(16.dp))
-                                }
                             }
                         }
                     }
@@ -890,15 +976,17 @@ fun SetupTargetScreen(
             }
         }
 
-        // Gözetmen ayarları tamamen kaldırıldı
-
-        // Commit starting operation trigger button
+        // Kaydet Butonu
         item {
             Button(
                 onClick = {
-                    viewModel.startNewTarget(context)
-                    Toast.makeText(context, "Sözleşmeli Kilit Başlatıldı!", Toast.LENGTH_SHORT).show()
-                    onCompleted()
+                    if (targetPkg.isEmpty()) {
+                        Toast.makeText(context, "Lütfen önce bir uygulama seçin!", Toast.LENGTH_SHORT).show()
+                    } else {
+                        viewModel.startNewTarget(context)
+                        Toast.makeText(context, "Sözleşmeli Kilit Başlatıldı!", Toast.LENGTH_SHORT).show()
+                        onCompleted()
+                    }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = DangerRed, contentColor = Color.White),
                 shape = RoundedCornerShape(999.dp),
@@ -917,18 +1005,112 @@ fun SetupTargetScreen(
             }
         }
     }
+
+    // Uygulama Seçim BottomSheet (Yüksek Performanslı LazyColumn & Search)
+    if (showAppPickerSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showAppPickerSheet = false },
+            sheetState = sheetState,
+            containerColor = DarkCharcoal
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 20.dp, vertical = 10.dp)
+            ) {
+                Text(
+                    text = "Uygulama Seçin",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PureBlack,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+
+                // Arama Çubuğu
+                OutlinedTextField(
+                    value = searchAppQuery,
+                    onValueChange = { searchAppQuery = it },
+                    placeholder = { Text("Uygulama ara...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = PureWhite,
+                        unfocusedBorderColor = BorderGray
+                    )
+                )
+
+                // Filtrelenmiş Liste (Asenkron)
+                val filteredApps = remember(searchAppQuery, availableApps) {
+                    if (searchAppQuery.isEmpty()) {
+                        availableApps
+                    } else {
+                        availableApps.filter {
+                            it.first.contains(searchAppQuery, ignoreCase = true) ||
+                            it.second.contains(searchAppQuery, ignoreCase = true)
+                        }
+                    }
+                }
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(filteredApps, key = { it.second }) { app ->
+                        val isSelected = targetPkg == app.second
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (isSelected) SoftDangerRed else Color.Transparent)
+                                .border(1.dp, if (isSelected) DangerRed else Color.Transparent, RoundedCornerShape(12.dp))
+                                .clickable {
+                                    viewModel.updateTargetApp(app.first, app.second)
+                                    showAppPickerSheet = false
+                                }
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            AppIconView(packageName = app.second, modifier = Modifier.size(40.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = app.first,
+                                    fontSize = 14.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = PureBlack
+                                )
+                                Text(
+                                    text = app.second,
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MutedGray
+                                )
+                            }
+                            if (isSelected) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = DangerRed)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ==========================================
-// SCREEN 4: DETAILED PROFILE & SETTINGS SCREEN
+// SCREEN 4: DETAILED PROFILE & SETTINGS (TIMELINE LOG INTEGRATED)
 // ==========================================
 @Composable
 fun SettingsScreen(
     viewModel: GuardianViewModel
 ) {
-    val session by viewModel.userSession.collectAsState()
     val logs by viewModel.allLogs.collectAsState()
-    var isJsonPanelExpanded by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier
@@ -939,7 +1121,7 @@ fun SettingsScreen(
     ) {
         item {
             Text(
-                text = "AYARLAR VE PROFİL",
+                text = "AYARLAR VE GEÇMİŞ",
                 fontSize = 14.sp,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
@@ -947,17 +1129,67 @@ fun SettingsScreen(
             )
         }
 
-        // Karmaşık JSON ve Log UI'ları minimalist yaklaşım sebebiyle kaldırıldı
-
-        // Section 4: Safe Reset Current config
+        // Sözleşmeyi Sıfırla Kartı
         item {
-            Button(
-                onClick = { viewModel.resetTargetSession() },
-                colors = ButtonDefaults.buttonColors(containerColor = SoftDangerRed, contentColor = DangerRed),
-                shape = RoundedCornerShape(999.dp),
-                modifier = Modifier.fillMaxWidth()
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, BorderGray, RoundedCornerShape(20.dp)),
+                colors = CardDefaults.cardColors(containerColor = DarkCharcoal),
+                shape = RoundedCornerShape(20.dp)
             ) {
-                Text("KİLİT ANLAŞMASINI FESHET / SIFIRLA", fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Aktif Kilit Yönetimi",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PureBlack
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Geçerli tüm engellemeleri kaldırıp yeni bir sözleşme oluşturmak için sıfırlayabilirsiniz.",
+                        fontSize = 11.sp,
+                        color = MutedGray
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { viewModel.resetTargetSession() },
+                        colors = ButtonDefaults.buttonColors(containerColor = SoftDangerRed, contentColor = DangerRed),
+                        shape = RoundedCornerShape(999.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("KİLİT ANLAŞMASINI FESHET / SIFIRLA", fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // Timeline Log Görünümü (İnsancıl loglar)
+        item {
+            Text(
+                text = "SON İRADELİ HAREKETLER",
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                color = MutedGray,
+                letterSpacing = 0.5.sp,
+                modifier = Modifier.padding(top = 10.dp)
+            )
+        }
+
+        if (logs.isEmpty()) {
+            item {
+                Text(
+                    text = "Henüz kaydedilmiş bir hareket bulunmuyor.",
+                    fontSize = 12.sp,
+                    color = MutedGray,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                    textAlign = TextAlign.Center
+                )
+            }
+        } else {
+            items(logs) { log ->
+                TimelineLogItem(log = log)
             }
         }
 
@@ -967,18 +1199,83 @@ fun SettingsScreen(
     }
 }
 
-// ==========================================
-// STATIC/SHARED COMPOSE PARTS & HELPERS
-// ==========================================
+// Dikey Timeline Log Tasarımı
 @Composable
-fun HeaderSection(session: UserSessionEntity?) {
-    val levelName = when (session?.level ?: 1) {
-        1 -> "ÇAYLAK"
-        2 -> "DİSİPLİNLİ"
-        3 -> "USTA"
-        else -> "ÇAYLAK"
+fun TimelineLogItem(log: StatusLogEntity) {
+    val displayMessage = when (log.eventType) {
+        "BLOCKED" -> "Uygulama engellendi ve ana ekrana yönlendirildi."
+        "SESSION_RESET" -> "Kilit sözleşmesi sıfırlandı."
+        "Sözleşmeli Kilit Başlatıldı" -> "İrade kilidi aktif edildi."
+        else -> log.details
     }
 
+    val displayTime = remember(log.timestamp) {
+        val sdf = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+        sdf.format(java.util.Date(log.timestamp))
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        // Zaman Sütunu
+        Text(
+            text = displayTime,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Bold,
+            color = MutedGray,
+            modifier = Modifier.width(48.dp)
+        )
+
+        // Dikey Çizgi ve Nokta
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(horizontal = 8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(if (log.eventType == "BLOCKED") DangerRed else SuccessGreen)
+            )
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .height(40.dp)
+                    .background(BorderGray)
+            )
+        }
+
+        // İçerik Kartı
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(bottom = 12.dp)
+        ) {
+            Text(
+                text = log.appName.ifEmpty { "Sistem" },
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = PureBlack
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = displayMessage,
+                fontSize = 11.sp,
+                color = MutedGray,
+                lineHeight = 16.sp
+            )
+        }
+    }
+}
+
+@Composable
+fun HeaderSection(session: UserSessionEntity?) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1000,7 +1297,7 @@ fun HeaderSection(session: UserSessionEntity?) {
                     .padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
                 Text(
-                    text = "v0.7",
+                    text = "v0.8",
                     fontSize = 9.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
@@ -1008,9 +1305,5 @@ fun HeaderSection(session: UserSessionEntity?) {
                 )
             }
         }
-        // Minimalist görünüm için rütbe ve utanç rozeti alanları temizlendi.
     }
 }
-
-// HistoryLogs ve JSON Schema görüntüleyicisi UI bileşenleri silindi
-

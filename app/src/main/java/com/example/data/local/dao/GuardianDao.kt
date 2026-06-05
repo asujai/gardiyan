@@ -4,6 +4,7 @@ import androidx.room.*
 import com.example.data.local.entity.FriendEntity
 import com.example.data.local.entity.StatusLogEntity
 import com.example.data.local.entity.UserSessionEntity
+import com.example.data.local.entity.AppRestrictionEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -21,6 +22,25 @@ interface GuardianDao {
 
     @Update
     suspend fun updateUserSession(session: UserSessionEntity)
+
+    // App Restrictions queries
+    @Query("SELECT * FROM app_restrictions ORDER BY appName ASC")
+    fun getAllAppRestrictions(): Flow<List<AppRestrictionEntity>>
+
+    @Query("SELECT * FROM app_restrictions WHERE packageName = :packageName LIMIT 1")
+    suspend fun getAppRestrictionSync(packageName: String): AppRestrictionEntity?
+    
+    @Query("SELECT * FROM app_restrictions")
+    suspend fun getAllAppRestrictionsSync(): List<AppRestrictionEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAppRestriction(restriction: AppRestrictionEntity)
+
+    @Update
+    suspend fun updateAppRestriction(restriction: AppRestrictionEntity)
+
+    @Delete
+    suspend fun deleteAppRestriction(restriction: AppRestrictionEntity)
 
     // Log queries
     @Query("SELECT * FROM status_logs ORDER BY timestamp DESC")

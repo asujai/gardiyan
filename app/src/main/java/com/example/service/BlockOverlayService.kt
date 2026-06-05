@@ -9,14 +9,22 @@ import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.example.MainActivity
 import com.example.data.local.database.GuardianDatabase
 import com.example.data.repository.GuardianRepository
+import com.example.data.local.entity.AppRestrictionEntity
 import kotlinx.coroutines.*
 
 class BlockOverlayService : Service() {
@@ -27,6 +35,9 @@ class BlockOverlayService : Service() {
 
     private var lastForegroundPackage: String = ""
     private var isCurrentlyBlocked = false
+
+    private var windowManager: WindowManager? = null
+    private var overlayView: View? = null
 
     companion object {
         var isServiceRunning = false
@@ -45,14 +56,9 @@ class BlockOverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Servisin Android tarafından öldürülürse yeniden başlatılmasını ister
         return START_STICKY
     }
 
-    /**
-     * UYGULAMA RECENT APPS'TEN KAPATILDIĞINDA (SWIPE TO DISMISS) ÇALIŞIR
-     * Servisin ölümsüz olması (hemen tekrar canlanması) için AlarmManager kullanıyoruz.
-     */
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         
@@ -115,85 +121,144 @@ class BlockOverlayService : Service() {
         }
     }
 
+    private val discouragingMessages = listOf(
+        "Vazgeç.",
+        "Bu savaşı kazanamazsın.",
+        "İraden zayıf mı?",
+        "Ekranı kapat ve git.",
+        "Burada zaman kaybetmek yerine hayatına dön."
+    )
+    private var infiniteLoopCounter = 10
+    private var currentMessageIndex = 0
+    private var overlayTextView: TextView? = null
+
     // ─────────────────────────────────────────────────────────────────
-    // FORCE HOME (ANA EKRANA FIRLATMA) MİMARİSİ
-    // 250ms döngü ile hedefe girildiği "an" kullanıcı ana ekrana geri fırlatılır.
+    // ZERO-DELAY OVERLAY MİMARİSİ
+    // delay(1000) ile her saniye taranır. Hedef paket bulununca Overlay açılır.
     // ─────────────────────────────────────────────────────────────────
     private fun startTracking() {
         trackingJob = serviceScope.launch {
             val db = GuardianDatabase.getDatabase(applicationContext)
             val repository = GuardianRepository(db.guardianDao())
 
-            var lastSecondTick = System.currentTimeMillis()
-
             while (isActive) {
                 try {
-                    val session = repository.getSessionSync()
+                    val activeRestrictions = repository.getAllAppRestrictionsSync().filter { it.isActive }
+                    val targetPkgs = activeRestrictions.map { it.packageName }
+                    
+                    val currentApp = getForegroundPackage()
+                    if (!currentApp.isNullOrEmpty()) {
+                        lastForegroundPackage = currentApp
+                    }
 
-                    if (session != null && session.isActive && session.targetAppPackage.isNotEmpty()) {
-                        val targetPkg = session.targetAppPackage
-                        val currentApp = getForegroundPackage()
+                    if (targetPkgs.contains(lastForegroundPackage)) {
+                        val activeRestriction = activeRestrictions.find { it.packageName == lastForegroundPackage }
                         
-                        if (!currentApp.isNullOrEmpty()) {
-                            lastForegroundPackage = currentApp
-                        }
+                        if (activeRestriction != null) {
+                            var remainingSeconds = activeRestriction.remainingSecondsToday
 
-                        // Sadece hedef uygulama açıkken süre sayar ve bloklar
-                        if (lastForegroundPackage == targetPkg) {
-                            val now = System.currentTimeMillis()
-                            var remainingSeconds = session.remainingSecondsToday
+                            if (remainingSeconds > 0) {
+                                remainingSeconds -= 1
+                                val remainingMinutes = remainingSeconds / 60
 
-                            // Saniyede 1 kez süreyi düşür (çünkü döngü 250ms)
-                            if (now - lastSecondTick >= 1000L) {
-                                lastSecondTick = now
-                                if (remainingSeconds > 0) {
-                                    remainingSeconds -= 1
-                                    val remainingMinutes = remainingSeconds / 60
-
-                                    repository.saveSession(
-                                        session.copy(
-                                            remainingSecondsToday = remainingSeconds,
-                                            remainingMinutesToday = remainingMinutes,
-                                            lastCheckedMillis = now
-                                        )
+                                repository.saveAppRestriction(
+                                    activeRestriction.copy(
+                                        remainingSecondsToday = remainingSeconds,
+                                        remainingMinutesToday = remainingMinutes
                                     )
-                                }
+                                )
                             }
 
-                            // Süre bitmişse ZORLA ANA EKRANA FIRLAT
                             if (remainingSeconds <= 0) {
-                                forceHomeScreen()
+                                // SÜRE DOLDU - OVERLAY ÇIKAR VE INFINITE LOOP BAŞLAT
+                                withContext(Dispatchers.Main) {
+                                    showOverlay()
+                                    updateOverlayText()
+                                }
+                                
+                                infiniteLoopCounter -= 1
+                                if (infiniteLoopCounter <= 0) {
+                                    // Döngü başa sarıyor
+                                    infiniteLoopCounter = 10
+                                    currentMessageIndex = (currentMessageIndex + 1) % discouragingMessages.size
+                                }
                                 
                                 if (!isCurrentlyBlocked) {
                                     isCurrentlyBlocked = true
-                                    repository.insertLog(
-                                        eventType = "BLOCKED",
-                                        appName = session.targetAppName,
-                                        details = "Süre doldu, kullanıcı ana ekrana fırlatıldı."
-                                    )
+                                    repository.failActiveTarget(lastForegroundPackage)
                                 }
                             }
-                        } else {
-                            // Hedef uygulamadan çıkıldığı an bayrağı temizle
+                        }
+                    } else {
+                        if (isCurrentlyBlocked) {
+                            withContext(Dispatchers.Main) {
+                                hideOverlay()
+                            }
                             isCurrentlyBlocked = false
-                            // Tick süresini senkronize et ki uygulamaya girince direkt 1 sn gitmesin
-                            lastSecondTick = System.currentTimeMillis()
+                            infiniteLoopCounter = 10
                         }
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
 
-                // Çok hızlı (250ms) algılama, sıfır gecikme!
-                delay(250L)
+                delay(1000L)
             }
         }
     }
 
-    /**
-     * Kullanıcıyı zorla Android Ana Ekranına (Home) gönderir.
-     * Bu sayede "Diğer uygulamaların üzerinde göster" (Overlay) bildirimleri çıkmaz.
-     */
+    private fun showOverlay() {
+        if (overlayView != null) return
+        
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        
+        val layoutParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        )
+        
+        overlayView = FrameLayout(this).apply {
+            setBackgroundColor(Color.parseColor("#E53935")) // Kırmızı Arka Plan
+            overlayTextView = TextView(this@BlockOverlayService).apply {
+                text = "GARDİYAN\n\nZaman Doldu!\n"
+                textSize = 28f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+            }
+            addView(overlayTextView, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            ))
+        }
+        
+        try {
+            windowManager?.addView(overlayView, layoutParams)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            // Fallback (fakat artık infinite loop ile pes etmesi bekleniyor)
+        }
+    }
+
+    private fun updateOverlayText() {
+        val currentMsg = discouragingMessages[currentMessageIndex]
+        overlayTextView?.text = "GARDİYAN\n\n$currentMsg\n\nYeniden başlatılıyor: $infiniteLoopCounter"
+    }
+
+    private fun hideOverlay() {
+        if (overlayView != null) {
+            try {
+                windowManager?.removeView(overlayView)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            overlayView = null
+            overlayTextView = null
+        }
+    }
+
     private fun forceHomeScreen() {
         val homeIntent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_HOME)
@@ -206,15 +271,16 @@ class BlockOverlayService : Service() {
         val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return null
         val time = System.currentTimeMillis()
         
-        // Son 1 dakikadaki eventlere bak
-        val usageEvents = usm.queryEvents(time - 1000 * 60, time)
+        // Son 3 saniyelik zaman dilimindeki eventleri çek (Kullanıcının isteği 2-3 saniye)
+        val usageEvents = usm.queryEvents(time - 3000, time)
         val event = UsageEvents.Event()
         
         var currentForegroundApp: String? = null
         
         while (usageEvents.hasNextEvent()) {
             usageEvents.getNextEvent(event)
-            if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
+            // ACTIVITY_RESUMED (1) veya eski API'ler için MOVE_TO_FOREGROUND (1) kontrolü
+            if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED || event.eventType == 1) {
                 currentForegroundApp = event.packageName
             }
         }
@@ -226,5 +292,6 @@ class BlockOverlayService : Service() {
         super.onDestroy()
         isServiceRunning = false
         serviceJob.cancel()
+        hideOverlay()
     }
 }

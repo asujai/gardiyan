@@ -3,6 +3,7 @@ package com.example.data.repository
 import com.example.data.local.dao.GuardianDao
 import com.example.data.local.entity.UserSessionEntity
 import com.example.data.local.entity.StatusLogEntity
+import com.example.data.local.entity.AppRestrictionEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 
@@ -10,8 +11,19 @@ class GuardianRepository(private val guardianDao: GuardianDao) {
 
     val userSession: Flow<UserSessionEntity?> = guardianDao.getUserSession()
     val allLogs: Flow<List<StatusLogEntity>> = guardianDao.getAllLogs()
+    val allAppRestrictions: Flow<List<AppRestrictionEntity>> = guardianDao.getAllAppRestrictions()
 
     suspend fun getSessionSync(): UserSessionEntity? = guardianDao.getUserSessionSync()
+
+    suspend fun getAllAppRestrictionsSync(): List<AppRestrictionEntity> = guardianDao.getAllAppRestrictionsSync()
+
+    suspend fun saveAppRestriction(restriction: AppRestrictionEntity) {
+        guardianDao.insertAppRestriction(restriction)
+    }
+
+    suspend fun deleteAppRestriction(restriction: AppRestrictionEntity) {
+        guardianDao.deleteAppRestriction(restriction)
+    }
 
     suspend fun insertDefaultSessionIfMissing() {
         val current = guardianDao.getUserSessionSync()
@@ -21,7 +33,9 @@ class GuardianRepository(private val guardianDao: GuardianDao) {
                 username = "GardiyanUser",
                 level = 1,
                 hasRedBadge = false,
-                isActive = false
+                isActive = false,
+                targetAppPackage = "",
+                targetAppName = ""
             )
             guardianDao.insertUserSession(defaultSession)
         }
@@ -49,7 +63,7 @@ class GuardianRepository(private val guardianDao: GuardianDao) {
      * Triggered when the user fails a target (either target timer expires while running, 
      * or they execute the 60 seconds "Pes Et" sequence).
      */
-    suspend fun failActiveTarget() {
+    suspend fun failActiveTarget(packageName: String? = null) {
         val session = getSessionSync() ?: return
         
         // Immediate Heavy Status Sentence:
@@ -68,10 +82,20 @@ class GuardianRepository(private val guardianDao: GuardianDao) {
         
         guardianDao.insertUserSession(updatedSession)
         
+        // If specific package failed
+        var appName = "Bilinmeyen Uygulama"
+        if (packageName != null) {
+            val restriction = guardianDao.getAppRestrictionSync(packageName)
+            if (restriction != null) {
+                appName = restriction.appName
+                guardianDao.updateAppRestriction(restriction.copy(isActive = false))
+            }
+        }
+        
         // Record Failure status
         insertLog(
             eventType = "FAILURE",
-            appName = session.targetAppName,
+            appName = appName,
             details = "Kilit kırıldı. Level 1 rütbesine düşürüldünüz! Kırmızı Utanç Rozeti profilinize işlendi."
         )
     }
@@ -79,9 +103,8 @@ class GuardianRepository(private val guardianDao: GuardianDao) {
     /**
      * Triggered when the user successfully completes a target day
      */
-    suspend fun succeedActiveTarget() {
+    suspend fun succeedActiveTarget(packageName: String? = null) {
         val session = getSessionSync() ?: return
-        if (!session.isActive) return
 
         val nextStreak = session.consecutiveSuccessDays + 1
         var nextLevel = session.level
@@ -121,9 +144,19 @@ class GuardianRepository(private val guardianDao: GuardianDao) {
         )
 
         guardianDao.insertUserSession(updatedSession)
+        
+        var appName = "Genel"
+        if (packageName != null) {
+            val restriction = guardianDao.getAppRestrictionSync(packageName)
+            if (restriction != null) {
+                appName = restriction.appName
+                guardianDao.updateAppRestriction(restriction.copy(isActive = false))
+            }
+        }
+
         insertLog(
             eventType = "SUCCESS",
-            appName = session.targetAppName,
+            appName = appName,
             details = logDetails
         )
     }

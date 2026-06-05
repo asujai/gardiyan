@@ -8,14 +8,16 @@ import com.example.data.local.dao.GuardianDao
 import com.example.data.local.entity.FriendEntity
 import com.example.data.local.entity.StatusLogEntity
 import com.example.data.local.entity.UserSessionEntity
+import com.example.data.local.entity.AppRestrictionEntity
 
 @Database(
     entities = [
         UserSessionEntity::class,
         FriendEntity::class,
-        StatusLogEntity::class
+        StatusLogEntity::class,
+        AppRestrictionEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class GuardianDatabase : RoomDatabase() {
