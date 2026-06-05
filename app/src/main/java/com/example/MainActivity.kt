@@ -47,7 +47,6 @@ import androidx.navigation.compose.*
 import com.example.data.local.entity.RestrictedAppEntity
 import com.example.data.local.entity.StatusLogEntity
 import com.example.data.local.entity.UserSessionEntity
-import com.example.BuildConfig
 import com.example.ui.theme.*
 import com.example.viewmodel.GuardianViewModel
 import com.example.viewmodel.GuardianViewModelFactory

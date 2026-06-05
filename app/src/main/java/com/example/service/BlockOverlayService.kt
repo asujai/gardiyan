@@ -99,6 +99,12 @@ class BlockOverlayService : Service() {
          * Service çalışmıyorsa pending olarak saklar, service onCreate'te uygular.
          */
         @JvmStatic
+        fun showLockOverlay(context: Context, targetAppName: String, targetAppPackage: String) {
+            appContextRef = context.applicationContext
+            showLockOverlay(targetAppName, targetAppPackage)
+        }
+
+        @JvmStatic
         fun showLockOverlay(targetAppName: String, targetAppPackage: String) {
             Log.i(TAG, "showLockOverlay requested for $targetAppName")
             val instance = serviceInstance
@@ -132,6 +138,7 @@ class BlockOverlayService : Service() {
          * `BlockOverlayService.customEmojiUri = uri` (companion var setter).
          */
         fun start(context: Context) {
+            appContextRef = context.applicationContext
             val serviceIntent = Intent(context, BlockOverlayService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(serviceIntent)

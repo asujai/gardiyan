@@ -202,7 +202,7 @@ class AppBlockAccessibilityService : AccessibilityService() {
                 val db = GuardianDatabase.getDatabase(applicationContext)
                 val repository = GuardianRepository(db.guardianDao())
                 val activeApps = withContext(Dispatchers.IO) {
-                    repository.getActiveRestrictedAppsSync()
+                    repository.getActiveRestrictedAppsForTodaySync()
                 }
 
                 if (activeApps.isEmpty()) {
@@ -232,7 +232,9 @@ class AppBlockAccessibilityService : AccessibilityService() {
                         if (matchingApp.remainingSecondsToday <= 0) {
                             tickJob?.cancel()
                             tickJob = null
+                            repository.failRestrictedApp(matchingApp.id)
                             BlockOverlayService.showLockOverlay(
+                                applicationContext,
                                 matchingApp.appName,
                                 matchingApp.packageName
                             )
@@ -243,7 +245,15 @@ class AppBlockAccessibilityService : AccessibilityService() {
                                 try {
                                     delay(remaining * 1000L)
                                     Log.d(TAG, "Tick fired: ${matchingApp.appName} remaining=$remaining reached zero")
+                                    repository.updateRestrictedApp(
+                                        matchingApp.copy(
+                                            remainingSecondsToday = 0,
+                                            remainingMinutesToday = 0
+                                        )
+                                    )
+                                    repository.failRestrictedApp(matchingApp.id)
                                     BlockOverlayService.showLockOverlay(
+                                        applicationContext,
                                         matchingApp.appName,
                                         matchingApp.packageName
                                     )
@@ -309,6 +319,9 @@ class AppBlockAccessibilityService : AccessibilityService() {
                     remainingMinutesToday = newMinutes
                 )
             )
+            if (newRemaining <= 0) {
+                repository.failRestrictedApp(trackedApp.id)
+            }
         }
 
         Log.d(TAG, "Exited ${trackedApp.appName}. Elapsed: ${elapsedSec}s, Remaining: ${newRemaining}s")

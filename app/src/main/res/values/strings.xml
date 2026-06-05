@@ -1,6 +1,6 @@
 <resources>
     <string name="app_name">Gardiyan</string>
-    <string name="accessibility_service_description">Gardiyan kilit ekranı, sözleşmeli hedef uygulamalara girildiğinde bloke eder. Yalnızca hedef uygulama öne geçtiğinde tetiklenir.</string>
+    <string name="accessibility_service_description">Gardiyan kilit ekranı, seçilen hedef uygulamalara girildiğinde bloke eder. Yalnızca hedef uygulama öne geçtiğinde tetiklenir.</string>
     <string name="notification_channel_service">Gardiyan İzleme Servisi</string>
     <string name="notification_channel_service_desc">Hedef uygulamalar arka planda izleniyor</string>
 </resources>

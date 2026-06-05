@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.data.local.dao.GuardianDao
 import com.example.data.local.entity.FriendEntity
 import com.example.data.local.entity.RestrictedAppEntity
@@ -17,7 +19,7 @@ import com.example.data.local.entity.UserSessionEntity
         StatusLogEntity::class,
         RestrictedAppEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class GuardianDatabase : RoomDatabase() {
@@ -34,10 +36,16 @@ abstract class GuardianDatabase : RoomDatabase() {
                     GuardianDatabase::class.java,
                     "guardian_db"
                 )
-                .fallbackToDestructiveMigration()
+                .addMigrations(MIGRATION_4_5)
                 .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE restricted_apps ADD COLUMN lastResetDate TEXT NOT NULL DEFAULT ''")
             }
         }
     }

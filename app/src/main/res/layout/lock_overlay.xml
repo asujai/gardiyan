@@ -11,8 +11,6 @@
         android:orientation="vertical"
         android:padding="32dp">
 
-        <!-- Döngüsel emoji / resim placeholder. Şimdilik emoji gösterir;
-             ileride harici dosyadan (URI) yüklenebilir. -->
         <FrameLayout
             android:id="@+id/emojiContainer"
             android:layout_width="180dp"
@@ -31,8 +29,8 @@
                 android:id="@+id/emojiImage"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
+                android:contentDescription="Kilitleme görseli"
                 android:scaleType="fitCenter"
-                android:contentDescription="Kilitleme emojisi/görseli"
                 android:visibility="gone" />
         </FrameLayout>
 
@@ -54,11 +52,10 @@
             android:layout_marginTop="6dp"
             android:gravity="center"
             android:paddingHorizontal="16dp"
-            android:text="Kilit ekranı sonsuz döngüde. İptal ancak Gardiyan uygulamasından 5 saniye basılı tutarak yapılabilir."
+            android:text="Kilit ekranı döngüde kalır. İptal yalnızca Gardiyan uygulamasından 5 saniye basılı tutarak yapılabilir."
             android:textColor="#BBBBBB"
             android:textSize="12sp" />
 
-        <!-- 30 dakikalık geri sayım kartı -->
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -88,7 +85,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:fontFamily="monospace"
-                    android:text="30:00"
+                    android:text="00:10"
                     android:textColor="#FF1744"
                     android:textSize="56sp"
                     android:textStyle="bold" />
@@ -107,7 +104,7 @@
             android:layout_marginTop="16dp"
             android:alpha="0.6"
             android:gravity="center"
-            android:text="Bu ekranı kapatamazsın. 30 dakika sonra emoji tekrar gösterilir ve döngü baştan başlar."
+            android:text="Bu ekranı kapatamazsın. Döngü bittiğinde sayaç tekrar başlar."
             android:textColor="#FFFFFF"
             android:textSize="10sp" />
     </LinearLayout>

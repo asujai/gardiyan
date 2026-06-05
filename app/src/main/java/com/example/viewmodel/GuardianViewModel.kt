@@ -4,7 +4,6 @@ import android.app.AppOpsManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
 import android.os.Process
@@ -62,6 +61,7 @@ class GuardianViewModel(context: Context) : ViewModel() {
     init {
         viewModelScope.launch {
             repository.insertDefaultSessionIfMissing()
+            repository.resetDailyCountersIfNeeded()
         }
     }
 
@@ -82,7 +82,7 @@ class GuardianViewModel(context: Context) : ViewModel() {
      * güncellenir, yoksa yeni satır oluşturulur.
      * isActive = true HER ZAMAN — kolay kapatma yok.
      */
-    fun addRestrictedApp(packageName: String, appName: String, dailyLimitMinutes: Int, activeDays: String = "Pzt,Sal,Çar,Per,Cum,Cmt,Paz") {
+    fun addRestrictedApp(packageName: String, appName: String, dailyLimitMinutes: Int, activeDays: String = GuardianRepository.ALL_DAYS) {
         viewModelScope.launch {
             val id = repository.upsertRestrictedApp(packageName, appName, dailyLimitMinutes, activeDays)
             repository.insertLog(
@@ -102,7 +102,7 @@ class GuardianViewModel(context: Context) : ViewModel() {
      * kilitlenecek şekilde listeye ekler (örn. 10 saniye). Mevcut servisi
      * tetikler.
      */
-    fun startQuickTest(context: Context, packageName: String, appName: String, testSeconds: Int = 10, activeDays: String = "Pzt,Sal,Çar,Per,Cum,Cmt,Paz") {
+    fun startQuickTest(context: Context, packageName: String, appName: String, testSeconds: Int = 10, activeDays: String = GuardianRepository.ALL_DAYS) {
         viewModelScope.launch {
             repository.insertQuickTestApp(packageName, appName, testSeconds, activeDays)
             repository.insertLog(
@@ -367,28 +367,12 @@ class GuardianViewModel(context: Context) : ViewModel() {
         val launcherIntent = Intent(Intent.ACTION_MAIN, null).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
         }
-        val launcherPackageNames = try {
-            pm.queryIntentActivities(launcherIntent, 0).map {
-                it.activityInfo.packageName
-            }.toSet()
-        } catch (e: Exception) {
-            emptySet()
-        }
-
         try {
-            val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
-            for (appInfo in apps) {
-                val pkgName = appInfo.packageName
-                if (pkgName == context.packageName) continue
-
-                val isSystemApp = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
-                val isLauncher = launcherPackageNames.isEmpty() || launcherPackageNames.contains(pkgName)
-                val isPopular = popularPackages.contains(pkgName)
-
-                if (isPopular || (!isSystemApp && isLauncher)) {
-                    val label = appInfo.loadLabel(pm).toString()
-                    list.add(Pair(label, pkgName))
-                }
+            pm.queryIntentActivities(launcherIntent, 0).forEach { resolveInfo ->
+                val pkgName = resolveInfo.activityInfo.packageName
+                if (pkgName == context.packageName) return@forEach
+                val label = resolveInfo.loadLabel(pm).toString()
+                list.add(Pair(label, pkgName))
             }
         } catch (e: Exception) {
         }
