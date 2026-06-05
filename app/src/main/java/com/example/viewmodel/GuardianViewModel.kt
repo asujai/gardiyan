@@ -1,31 +1,34 @@
 package com.example.viewmodel
 
-import android.app.AlarmManager
 import android.app.AppOpsManager
-import android.app.usage.UsageStatsManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import android.os.Process
 import android.provider.Settings
+import android.text.TextUtils
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.database.GuardianDatabase
-import com.example.data.local.entity.FriendEntity
+import com.example.data.local.entity.RestrictedAppEntity
 import com.example.data.local.entity.StatusLogEntity
 import com.example.data.local.entity.UserSessionEntity
 import com.example.data.repository.GuardianRepository
+import com.example.service.AppBlockAccessibilityService
 import com.example.service.BlockOverlayService
+import com.example.service.KeepAliveScheduler
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 class GuardianViewModel(context: Context) : ViewModel() {
 
-    private val db = GuardianDatabase.getDatabase(context.applicationContext)
+    private val appContext = context.applicationContext
+    private val db = GuardianDatabase.getDatabase(appContext)
     private val repository = GuardianRepository(db.guardianDao())
 
-    // UI state streams observed from DB (MVVM)
     val userSession: StateFlow<UserSessionEntity?> = repository.userSession
         .stateIn(
             scope = viewModelScope,
@@ -40,31 +43,20 @@ class GuardianViewModel(context: Context) : ViewModel() {
             initialValue = emptyList()
         )
 
-    // Setup Process state management (Step 1: App, Step 2: Time, Step 3: Mode + Shame)
+    val restrictedApps: StateFlow<List<RestrictedAppEntity>> = repository.restrictedApps
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
     private val _setupStep = MutableStateFlow(1)
     val setupStep: StateFlow<Int> = _setupStep.asStateFlow()
 
-    // Temporary variables holding target creation parameters during setup steps
-    private val _targetAppName = MutableStateFlow("Instagram")
-    val targetAppName: StateFlow<String> = _targetAppName.asStateFlow()
-
-    private val _targetAppPackage = MutableStateFlow("com.instagram.android")
-    val targetAppPackage: StateFlow<String> = _targetAppPackage.asStateFlow()
-
-    private val _dailyLimitMinutes = MutableStateFlow(60)
-    val dailyLimitMinutes: StateFlow<Int> = _dailyLimitMinutes.asStateFlow()
-
-    private val _isObserverMode = MutableStateFlow(false)
-    val isObserverMode: StateFlow<Boolean> = _isObserverMode.asStateFlow()
-
-    private val _shameMessage = MutableStateFlow("Üzgünüm, bugün irademe yenildim ve Instagram'da sörf yaparken Gardiyan'a yakalandım. Bu mesaj utancımın kanıtıdır.")
+    private val _shameMessage = MutableStateFlow("\u00DCzg\u00FCn\u00FCm, bug\u00FCn irademe yenildim ve Instagram'da s\u00F6rf yaparken Gardiyan'a yakaland\u0131m. Bu mesaj utanc\u0131m\u0131n kan\u0131t\u0131d\u0131r.")
     val shameMessage: StateFlow<String> = _shameMessage.asStateFlow()
 
-    private val _observerContactName = MutableStateFlow("Ahmet (Gözetmen)")
-    val observerContactName: StateFlow<String> = _observerContactName.asStateFlow()
-
-    // Service running state observed locally
-    private val _isMonitoringActive = MutableStateFlow(BlockOverlayService.isServiceRunning)
+    private val _isMonitoringActive = MutableStateFlow(BlockOverlayService.isServiceRunning.get())
     val isMonitoringActive: StateFlow<Boolean> = _isMonitoringActive.asStateFlow()
 
     init {
@@ -77,133 +69,184 @@ class GuardianViewModel(context: Context) : ViewModel() {
         _setupStep.value = step
     }
 
-    fun updateTargetApp(name: String, pkg: String) {
-        _targetAppName.value = name
-        _targetAppPackage.value = pkg
-    }
-
-    fun updateDailyLimit(minutes: Int) {
-        _dailyLimitMinutes.value = minutes
-    }
-
-    fun updatePenaltyMode(isObserver: Boolean) {
-        _isObserverMode.value = isObserver
-    }
-
     fun updateShameMessage(msg: String) {
         _shameMessage.value = msg
     }
 
-    fun updateObserverContact(name: String) {
-        _observerContactName.value = name
-    }
+    // ============================
+    // Multi-app restricted list
+    // ============================
 
     /**
-     * Start the objective and commit session configuration to DB
+     * Kullanıcının kurduğu yeni bir kısıtlama. Aynı paket varsa limit
+     * güncellenir, yoksa yeni satır oluşturulur.
+     * isActive = true HER ZAMAN — kolay kapatma yok.
      */
-    fun startNewTarget(context: Context) {
+    fun addRestrictedApp(packageName: String, appName: String, dailyLimitMinutes: Int, activeDays: String = "Pzt,Sal,Çar,Per,Cum,Cmt,Paz") {
         viewModelScope.launch {
-            val session = repository.getSessionSync() ?: UserSessionEntity()
-            
-            // Build unique observer invite link for simulation V2
-            val inviteLink = "https://gardiyan.app/invite/user_${System.currentTimeMillis()}"
-
-            val updatedSession = session.copy(
-                isActive = true,
-                targetAppName = _targetAppName.value,
-                targetAppPackage = _targetAppPackage.value,
-                dailyLimitMinutes = _dailyLimitMinutes.value,
-                remainingMinutesToday = _dailyLimitMinutes.value,
-                remainingSecondsToday = _dailyLimitMinutes.value * 60,
-                isObserverMode = _isObserverMode.value,
-                shameMessage = _shameMessage.value,
-                observerContactName = _observerContactName.value,
-                observerInviteLink = inviteLink,
-                isObserverConfirmed = !_isObserverMode.value
-            )
-
-            repository.saveSession(updatedSession)
-            
+            val id = repository.upsertRestrictedApp(packageName, appName, dailyLimitMinutes, activeDays)
             repository.insertLog(
-                eventType = "TARGET_STARTED",
-                appName = _targetAppName.value,
-                details = "Kilitli hedef başlatıldı: ${if(_isObserverMode.value) "Gözetmen" else "Gardiyan"} Modu, Limit: ${_dailyLimitMinutes.value} Dk"
+                eventType = "RESTRICTION_ADDED",
+                appName = appName,
+                details = "$appName kısıtlama listesine eklendi: günde ${dailyLimitMinutes} dakika"
             )
-
-            // Start foreground interceptor service
-            toggleMonitoringService(context, true)
-            _setupStep.value = 1
+            // Eski `targetAppPackage` alanı için de set et (geri uyumluluk)
+            markSessionHavingRestrictions()
+            // Servis canlıysa veya değilse restart
+            ensureMonitoringRunning()
         }
     }
 
     /**
-     * Servis çöktüyse ve aktif oturum varsa yeniden başlatır.
-     * MainActivity.onResume() tarafından çağrılır.
+     * Hızlı test modu: seçilen uygulamayı belirli bir saniye sonra
+     * kilitlenecek şekilde listeye ekler (örn. 10 saniye). Mevcut servisi
+     * tetikler.
      */
+    fun startQuickTest(context: Context, packageName: String, appName: String, testSeconds: Int = 10, activeDays: String = "Pzt,Sal,Çar,Per,Cum,Cmt,Paz") {
+        viewModelScope.launch {
+            repository.insertQuickTestApp(packageName, appName, testSeconds, activeDays)
+            repository.insertLog(
+                eventType = "QUICK_TEST_STARTED",
+                appName = appName,
+                details = "$appName için hızlı test başlatıldı: ${testSeconds} saniye sonra kilit"
+            )
+            markSessionHavingRestrictions()
+            // A11y + overlay servisini başlat (henüz yoksa)
+            if (!BlockOverlayService.isServiceRunning.get()) {
+                startMonitoringService(appContext)
+            }
+        }
+    }
+
+    fun removeRestrictedApp(id: Long) {
+        viewModelScope.launch {
+            val app = repository.getRestrictedAppByIdSync(id)
+            repository.removeRestrictedApp(id)
+            if (app != null) {
+                repository.insertLog(
+                    eventType = "RESTRICTION_REMOVED",
+                    appName = app.appName,
+                    details = "${app.appName} kısıtlama listesinden çıkarıldı"
+                )
+            }
+        }
+    }
+
+    fun clearAllRestrictedApps() {
+        viewModelScope.launch {
+            repository.clearAllRestrictedApps()
+            repository.insertLog(
+                eventType = "RESTRICTIONS_CLEARED",
+                appName = "",
+                details = "Tüm kısıtlamalar silindi"
+            )
+        }
+    }
+
+    fun resetRestrictedApp(id: Long) {
+        viewModelScope.launch {
+            val app = repository.getRestrictedAppByIdSync(id) ?: return@launch
+            repository.resetRestrictedApp(id)
+            repository.insertLog(
+                eventType = "RESTRICTION_RESET",
+                appName = app.appName,
+                details = "${app.appName} için günlük sayaç sıfırlandı"
+            )
+        }
+    }
+
+    /**
+     * Birden fazla hedef uygulama varsa session.isActive=true olur.
+     * Bu, A11y service'in "hiç aktif kısıtlama yok" durumunu
+     * yanlış değerlendirmesini engeller.
+     */
+    private suspend fun markSessionHavingRestrictions() {
+        val active = repository.getActiveRestrictedAppsSync()
+        val session = repository.getSessionSync() ?: UserSessionEntity()
+        if (active.isNotEmpty() && !session.isActive) {
+            repository.saveSession(session.copy(isActive = true))
+        }
+    }
+
+    private fun ensureMonitoringRunning() {
+        viewModelScope.launch {
+            if (!BlockOverlayService.isServiceRunning.get()) {
+                startMonitoringService(appContext)
+            }
+        }
+    }
+
     fun restartServiceIfNeeded(context: Context) {
         viewModelScope.launch {
-            val session = repository.getSessionSync()
-            if (session != null && session.isActive && !BlockOverlayService.isServiceRunning) {
-                toggleMonitoringService(context, true)
+            val active = repository.getActiveRestrictedAppsSync()
+            if (active.isNotEmpty() && !BlockOverlayService.isServiceRunning.get()) {
+                startMonitoringService(context)
             }
         }
     }
 
+    /**
+     * Servisi başlat. Kolay kapatma yok — dışarıdan false geçilemez.
+     * Servis durdurmak SADECE cancelAllWithFiveSecondHold() ile mümkündür.
+     */
+    private fun startMonitoringService(context: Context) {
+        val serviceIntent = Intent(context, BlockOverlayService::class.java)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            context.startForegroundService(serviceIntent)
+        } else {
+            context.startService(serviceIntent)
+        }
+        _isMonitoringActive.value = true
+    }
 
     /**
-     * Controls foreground application scanning and overlay trigger service
+     * Eski API uyumluluğu için korundu ama enable=false durumunda
+     * doğrudan servisi durdurmaz — sadece 5sn hold üzerinden çalışır.
+     *
+     * enable=true: servisi başlatır
+     * enable=false: NO-OP (kolay kapatma engellenmiştir)
      */
     fun toggleMonitoringService(context: Context, enable: Boolean) {
-        val serviceIntent = Intent(context, BlockOverlayService::class.java)
         if (enable) {
-            // Android 8+ (API 26+) için startForegroundService gereklidir.
-            // startService() çağrısı arka plandan yapıldığında sistem tarafından
-            // reddedilir ve servis hiç başlamaz.
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent)
-            } else {
-                context.startService(serviceIntent)
-            }
-            _isMonitoringActive.value = true
-        } else {
-            context.stopService(serviceIntent)
-            _isMonitoringActive.value = false
+            startMonitoringService(context)
         }
+        // enable = false → NO-OP
+        // Servis durdurmak YALNIZCA cancelAllWithFiveSecondHold() ile mümkündür
     }
 
     /**
-     * Clear and reset target locks cleanly safely
+     * 5 saniye basılı tutma sonrası çağrılır. Tüm aktif kısıtlamaları
+     * kaldırır, level'ı 1'e çeker, kırmızı rozet ekler, overlay'i
+     * temizler ve servisi durdurur.
+     *
+     * TEK YASAL DURDURMA YÖNTEMİ BU FONKSİYONDUR.
      */
-    fun resetTargetSession() {
+    fun cancelAllWithFiveSecondHold() {
         viewModelScope.launch {
-            val session = repository.getSessionSync() ?: return@launch
-            val updated = session.copy(
-                isActive = false,
-                targetAppPackage = "",
-                targetAppName = "",
-                remainingMinutesToday = 60
-            )
-            repository.saveSession(updated)
-            repository.insertLog(
-                eventType = "RESET",
-                appName = "",
-                details = "Mevcut hedef kilit ayarı temizlendi."
-            )
+            try {
+                repository.cancelAllActiveTargets()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            // Servisi durdur — sadece burada yapılır
+            if (BlockOverlayService.isServiceRunning.get()) {
+                val serviceIntent = Intent(appContext, BlockOverlayService::class.java)
+                appContext.stopService(serviceIntent)
+                _isMonitoringActive.value = false
+            }
+            // Overlay açıksa kapat
+            if (BlockOverlayService.isLockOverlayVisible.get()) {
+                BlockOverlayService.hideLockOverlay()
+            }
         }
     }
 
-    /**
-     * Clears local history logs
-     */
     fun clearLogs() {
         viewModelScope.launch {
             repository.clearLogs()
         }
     }
 
-    /**
-     * Helper checks if Usage Access settings exist and is enabled via AppOpsManager
-     */
     fun hasUsageStatsPermission(context: Context): Boolean {
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager ?: return false
         val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -249,13 +292,67 @@ class GuardianViewModel(context: Context) : ViewModel() {
         }
     }
 
-    /**
-     * Dynamically retrieves list of user-installed apps and populates procrastination targets
-     */
+    fun isAccessibilityServiceEnabled(context: Context): Boolean {
+        val expected = ComponentName(context, AppBlockAccessibilityService::class.java).flattenToString()
+        val enabled = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        val splitter = TextUtils.SimpleStringSplitter(':')
+        splitter.setString(enabled)
+        while (splitter.hasNext()) {
+            if (splitter.next().equals(expected, ignoreCase = true)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    fun openAccessibilitySettings(context: Context) {
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        context.startActivity(intent)
+    }
+
+    fun isBatteryOptimizationIgnored(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            pm.isIgnoringBatteryOptimizations(context.packageName)
+        } else {
+            true
+        }
+    }
+
+    fun requestBatteryOptimizationIgnore(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            data = android.net.Uri.parse("package:${context.packageName}")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(fallback)
+            } catch (e2: Exception) {
+                e2.printStackTrace()
+            }
+        }
+    }
+
+    fun ensureServiceAlive(context: Context) {
+        KeepAliveScheduler.schedule(appContext)
+        restartServiceIfNeeded(context)
+    }
+
     fun getInstalledApps(context: Context): List<Pair<String, String>> {
         val pm = context.packageManager
         val list = mutableListOf<Pair<String, String>>()
-        
+
         val popularPackages = setOf(
             "com.instagram.android",
             "com.zhiliaoapp.musically",
@@ -266,7 +363,7 @@ class GuardianViewModel(context: Context) : ViewModel() {
             "com.netflix.mediaclient",
             "com.valvesoftware.android.steam.community"
         )
-        
+
         val launcherIntent = Intent(Intent.ACTION_MAIN, null).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
         }
@@ -277,29 +374,28 @@ class GuardianViewModel(context: Context) : ViewModel() {
         } catch (e: Exception) {
             emptySet()
         }
-        
+
         try {
             val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
             for (appInfo in apps) {
                 val pkgName = appInfo.packageName
                 if (pkgName == context.packageName) continue
-                
+
                 val isSystemApp = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
                 val isLauncher = launcherPackageNames.isEmpty() || launcherPackageNames.contains(pkgName)
                 val isPopular = popularPackages.contains(pkgName)
-                
+
                 if (isPopular || (!isSystemApp && isLauncher)) {
                     val label = appInfo.loadLabel(pm).toString()
                     list.add(Pair(label, pkgName))
                 }
             }
         } catch (e: Exception) {
-            // Fallback inside outer block
         }
-        
+
         val popularList = list.filter { popularPackages.contains(it.second) }.sortedBy { it.first.uppercase() }
         val otherList = list.filter { !popularPackages.contains(it.second) }.sortedBy { it.first.uppercase() }
-        
+
         return popularList + otherList
     }
 }

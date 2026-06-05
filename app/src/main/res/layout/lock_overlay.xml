@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0A0A0A">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="32dp">
+
+        <!-- Döngüsel emoji / resim placeholder. Şimdilik emoji gösterir;
+             ileride harici dosyadan (URI) yüklenebilir. -->
+        <FrameLayout
+            android:id="@+id/emojiContainer"
+            android:layout_width="180dp"
+            android:layout_height="180dp"
+            android:background="@drawable/emoji_container_bg">
+
+            <TextView
+                android:id="@+id/emojiText"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:text="🚫"
+                android:textSize="120sp" />
+
+            <ImageView
+                android:id="@+id/emojiImage"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="fitCenter"
+                android:contentDescription="Kilitleme emojisi/görseli"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/targetAppText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:gravity="center"
+            android:paddingHorizontal="16dp"
+            android:text="Bu uygulama için günlük süren doldu."
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:paddingHorizontal="16dp"
+            android:text="Kilit ekranı sonsuz döngüde. İptal ancak Gardiyan uygulamasından 5 saniye basılı tutarak yapılabilir."
+            android:textColor="#BBBBBB"
+            android:textSize="12sp" />
+
+        <!-- 30 dakikalık geri sayım kartı -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:background="@drawable/countdown_card_bg"
+            android:padding="24dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:letterSpacing="0.1"
+                    android:text="BU DÖNGÜNÜN KALAN SÜRESİ"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/countdownText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:fontFamily="monospace"
+                    android:text="30:00"
+                    android:textColor="#FF1744"
+                    android:textSize="56sp"
+                    android:textStyle="bold" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:layout_marginTop="12dp"
+                    android:background="@drawable/progress_track_bg" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:alpha="0.6"
+            android:gravity="center"
+            android:text="Bu ekranı kapatamazsın. 30 dakika sonra emoji tekrar gösterilir ve döngü baştan başlar."
+            android:textColor="#FFFFFF"
+            android:textSize="10sp" />
+    </LinearLayout>
+</FrameLayout>

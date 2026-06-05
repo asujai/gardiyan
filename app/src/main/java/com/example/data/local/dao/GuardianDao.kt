@@ -2,6 +2,7 @@ package com.example.data.local.dao
 
 import androidx.room.*
 import com.example.data.local.entity.FriendEntity
+import com.example.data.local.entity.RestrictedAppEntity
 import com.example.data.local.entity.StatusLogEntity
 import com.example.data.local.entity.UserSessionEntity
 import kotlinx.coroutines.flow.Flow
@@ -38,4 +39,41 @@ interface GuardianDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFriends(friends: List<FriendEntity>)
+
+    // Restricted Apps (Multi-app support)
+    @Query("SELECT * FROM restricted_apps ORDER BY appName ASC")
+    fun getAllRestrictedApps(): Flow<List<RestrictedAppEntity>>
+
+    @Query("SELECT * FROM restricted_apps ORDER BY appName ASC")
+    suspend fun getAllRestrictedAppsSync(): List<RestrictedAppEntity>
+
+    @Query("SELECT * FROM restricted_apps WHERE isActive = 1")
+    suspend fun getActiveRestrictedAppsSync(): List<RestrictedAppEntity>
+
+    @Query("SELECT * FROM restricted_apps WHERE packageName = :pkg LIMIT 1")
+    suspend fun getRestrictedAppByPackageSync(pkg: String): RestrictedAppEntity?
+
+    @Query("SELECT * FROM restricted_apps WHERE id = :id LIMIT 1")
+    suspend fun getRestrictedAppByIdSync(id: Long): RestrictedAppEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRestrictedApp(app: RestrictedAppEntity): Long
+
+    @Update
+    suspend fun updateRestrictedApp(app: RestrictedAppEntity)
+
+    @Query("DELETE FROM restricted_apps WHERE id = :id")
+    suspend fun deleteRestrictedAppById(id: Long)
+
+    @Query("DELETE FROM restricted_apps")
+    suspend fun clearAllRestrictedApps()
+
+    @Query("UPDATE restricted_apps SET isActive = 0, isFailed = 1 WHERE id = :id")
+    suspend fun markRestrictedAppFailed(id: Long)
+
+    @Query("UPDATE restricted_apps SET isActive = 0 WHERE isActive = 1")
+    suspend fun deactivateAllRestrictedApps()
+
+    @Query("UPDATE restricted_apps SET isActive = 1, isFailed = 0, remainingSecondsToday = dailyLimitMinutes * 60, remainingMinutesToday = dailyLimitMinutes WHERE id = :id")
+    suspend fun resetRestrictedApp(id: Long)
 }

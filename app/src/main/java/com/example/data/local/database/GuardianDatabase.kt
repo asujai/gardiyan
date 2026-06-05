@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.example.data.local.dao.GuardianDao
 import com.example.data.local.entity.FriendEntity
+import com.example.data.local.entity.RestrictedAppEntity
 import com.example.data.local.entity.StatusLogEntity
 import com.example.data.local.entity.UserSessionEntity
 
@@ -13,9 +14,10 @@ import com.example.data.local.entity.UserSessionEntity
     entities = [
         UserSessionEntity::class,
         FriendEntity::class,
-        StatusLogEntity::class
+        StatusLogEntity::class,
+        RestrictedAppEntity::class
     ],
-    version = 2,
+    version = 4,
     exportSchema = false
 )
 abstract class GuardianDatabase : RoomDatabase() {
